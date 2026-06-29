@@ -1,8 +1,8 @@
 # 🖋️ autonovel-workflow —— 全自动小说创作工作流
 
 > 从一句话灵感种子到完整手稿，全自动流水线。
->
-> 参考 [NousResearch/autonovel](https://github.com/NousResearch/autonovel) 五层协同架构，完全基于 Hermes Agent 自身能力实现，无需任何外部 Python 脚本或 API Key。
+> 参考 [NousResearch/autonovel](https://github.com/NousResearch/autonovel) 五层协同架构 + InkOS 37-dimension audit 体系，
+> 完全基于 Hermes Agent 自身能力实现，无需任何外部 Python 脚本或 API Key。
 
 ---
 
@@ -13,7 +13,8 @@
 - [安装指南](#-安装指南)
 - [快速上手](#-快速上手)
 - [四阶段流水线详解](#-四阶段流水线详解)
-- [文件结构](#-文件结构)
+- [版本演进史](#-版本演进史)
+- [完整文件结构](#-完整文件结构)
 - [常见陷阱](#-常见陷阱)
 - [FAQ](#-faq)
 
@@ -23,26 +24,25 @@
 
 `autonovel-workflow` 是一个为 Hermes Agent 设计的小说创作技能。它定义了一套完整、可重复的自动化创作流程，从一句话灵感种子出发，经过：
 
-1. **地基构建** —— 世界观、角色、大纲、叙事声音、硬设数据库
-2. **初稿撰写** —— 逐章写作，每章质量门控
-3. **修改循环** —— 对抗式编辑 + 读者评审 + 深度审阅
+1. **地基构建** —— 世界观、角色、大纲、叙事声音、硬设数据库 + 雷达市场调研
+2. **初稿撰写** —— 逐章写作，每章质量门控 + 编排师上下文编译 + 观察者事实提取
+3. **修改循环** —— 37维度对抗式编辑 + 读者评审 + 深度审阅 + 字数治理
 4. **导出成品** —— 合并手稿 + 统计报告
 
-最终产出一部结构完整、质量可控的小说手稿。
+最终产出一部结构完整、质量可控的小说手稿。当前版本 **v1.10.0**，经过多轮实战验证（42章/54章年代文项目）。
 
 ### 适用场景
 
 - 你有一个灵感种子（一句话 premise），想扩展成完整小说
-- 你有一个故事构思，但不知道如何系统地展开
 - 你想要自动化的世界构建 + 角色设计 + 大纲生成流程
 - 你写了一版初稿但不知道如何修改，需要对抗式编辑和读者评审
-- 你想快速验证一个故事创意的可行性
+- 你想快速验证一个故事创意的可行性，先跑完地基看看评分
 
 ---
 
 ## 🏗️ 核心架构
 
-### 五层协同设计
+### 五层协同设计 + InkOS 组件融合
 
 ```
 Layer 5:  voice.md          —— 怎么写（叙事声音、文风调性）
@@ -55,12 +55,23 @@ Cross:    canon.md           —— 什么是真的（硬设数据库、不可�
 
 ### 变动双向传播原则
 
-- **向下影响：** 上层变动（如修改世界观）→ 下层自动调整（如重写相关章节的对话）
-- **向上反馈：** 下层写作过程中发现的设定矛盾 → 更新上层 canon.md 和 world.md
+- **向下影响：** 上层变动 → 下层自动调整
+- **向上反馈：** 下层写作中发现的设定矛盾 → 更新上层 canon.md
 
 ### 评分门控
 
-每个阶段完成时进行质量评分，只有达标才能进入下一阶段，防止有缺陷的根基影响后续所有工作。
+每个阶段完成时进行质量评分（foundation ≥ 7.5，章节 ≥ 6.0），不达标退回修改，最多 3 轮。
+
+### InkOS 组件融合矩阵
+
+| InkOS 组件 | 融合版本 | 实现位置 |
+|:----------|:--------:|:---------|
+| **审计员 Auditor** | v1.3.0 | Step 3a.1 — 37维度对抗式编辑（3 worker 并行） |
+| **写手 Writer** | v1.4.0 | Step 1.5 — voice.md 量化风格指纹 |
+| **字数治理** | v1.4.0 | Step 2.2.4 + Step 3b.2b — 5级偏差处理 |
+| **雷达 Radar** | v1.5.0 | Step 1.0 — 市场调研 + 竞争分析 |
+| **编排师 Composer** | v1.6.0 | Step 2.1b — 上下文编译（~1000字精简包） |
+| **观察者 Observer** | v1.7.0 | Step 2.2b — 7类事实提取 + 伏笔自动检测 |
 
 ---
 
@@ -71,106 +82,37 @@ Cross:    canon.md           —— 什么是真的（硬设数据库、不可�
 | 条件 | 说明 |
 |------|------|
 | Hermes Agent | 已安装并配置好模型/提供商 |
-| 工具集 | 确保 `file` 工具集已启用（`hermes tools enable file`） |
-| Context 窗口 | 建议 ≥ 32K tokens（长篇小说建议 ≥ 128K） |
-| 可选工具 | `delegate_task`（用于读者小组评审并行分发） |
+| 工具集 | `hermes tools enable file` |
+| Context 窗口 | 建议 ≥ 32K tokens（长篇 ≥ 128K） |
+| 可选工具 | `delegate_task`（读者小组评审 / 批量写作） |
 
 ### 安装方法
 
-#### 方法一：从 zip 压缩包安装（推荐）
-
-如果你已拿到 `autonovel-workflow.zip`：
-
 ```bash
-# 1. 解压到 Hermes 技能目录
+# 从 zip 安装（推荐）
 unzip -o autonovel-workflow.zip -d ~/.hermes/skills/
 
-# 2. 验证安装
+# 验证
 hermes skills list | grep autonovel
 ```
 
-#### 方法二：直接复制文件
-
-```bash
-# 创建目录
-mkdir -p ~/.hermes/skills/creative/autonovel-workflow/
-mkdir -p ~/.hermes/skills/creative/autonovel-workflow/references/
-mkdir -p ~/.hermes/skills/creative/autonovel-workflow/templates/
-
-# 复制文件（将以下文件放入对应目录）
-# SKILL.md           → creative/autonovel-workflow/
-# anti-slop.md       → creative/autonovel-workflow/references/
-# anti-patterns.md   → creative/autonovel-workflow/references/
-# world.md           → creative/autonovel-workflow/templates/
-# characters.md      → creative/autonovel-workflow/templates/
-# outline.md         → creative/autonovel-workflow/templates/
-# canon.md           → creative/autonovel-workflow/templates/
-```
-
-#### 方法三：远程 URL 安装
-
-如果 SKILL.md 托管在可访问的 URL 上：
-
-```bash
-hermes skills install https://你的网址/SKILL.md
-```
-
-> ⚠️ 此方式只安装主文件，不会自动拉取 `references/` 和 `templates/` 目录。建议配合方法一使用。
-
-### 安装后验证
-
-```bash
-# 刷新技能列表（在 Hermes 对话中输入）
-/reload-skills
-
-# 或者使用 CLI
-hermes skills list
-```
-
-如果看到 `autonovel-workflow` 在列表中，说明安装成功。
-
-### 卸载方法
-
-```bash
-rm -rf ~/.hermes/skills/creative/autonovel-workflow/
-```
-
-然后在 Hermes 中执行 `/reload-skills` 刷新。
-
----
-
-## 🚀 快速上手
-
-### 第一步：加载技能
-
-在 Hermes 对话中：
+### 加载技能
 
 ```
 /skill autonovel-workflow
 ```
 
-### 第二步：给出灵感种子
+---
 
-告诉它你的一句话故事 premise，例如：
+## 🚀 快速上手
 
-> 「一个在数据废墟中苏醒的 AI，误以为自己是人类考古学家，开始挖掘'人类文明'的遗迹——而它自己就是那个文明最后的遗物。」
-
-### 第三步：自动构建地基
-
-Hermes 会自动生成：
-- ✅ 世界设定 → `foundation/world.md`
-- ✅ 角色档案 → `foundation/characters.md`
-- ✅ 章节大纲 → `foundation/outline.md`
-- ✅ 叙事声音 → `foundation/voice.md`
-- ✅ 硬设数据库 → `foundation/canon.md`
-
-### 第四步：评分通过后进入初稿
-
-地基评分 ≥ 7.5 分后，自动开始逐章撰写。
-
-### 第五步：修改 → 导出
-
-初稿完成后进入修改循环，满意后导出完整手稿。
+1. **加载技能：** `/skill autonovel-workflow`
+2. **给出种子：** 一句话故事 premise
+3. **自动构建：** 生成 world.md / characters.md / outline.md / voice.md / canon.md
+4. **评分通过：** foundation_score ≥ 7.5 进入初稿
+5. **逐章写作：** 每章质量门控 + 实时字数治理
+6. **修改循环：** 对抗式编辑 → 读者评审 → 深度审阅
+7. **导出成品：** manuscript.md + manuscript-stats.md
 
 ---
 
@@ -178,81 +120,277 @@ Hermes 会自动生成：
 
 ### Phase 1：地基构建（Foundation）
 
-**目标：** 从种子概念出发，构建完整的五层设定体系。
-
-| Step | 产出文件 | 内容 |
-|------|---------|------|
-| 1.1 | — | 用户提供灵感种子 |
-| 1.2 | `foundation/world.md` | 世界观总览、物理法则、社会结构、地理生态、历史脉络 |
-| 1.3 | `foundation/characters.md` | 角色欲望/恐惧/弧光/关系网络（至少主角+反派+2-5配角） |
-| 1.4 | `foundation/outline.md` | 三幕/八序列章节大纲，每章含核心事件 + 悬念 |
-| 1.5 | `foundation/voice.md` | 叙事人称、语言调色盘、节奏标记、禁忌清单 |
-| 1.6 | `foundation/canon.md` | 不可违背的事实、设定一致性规则、时间线锚点 |
-| 1.7 | `foundation/scores.md` | 评分门控（≥ 7.5 通过，否则退回修改，最多 3 轮） |
-
-**评分维度：** 世界观一致性(20%)、角色深度(25%)、大纲可行性(20%)、声音独特性(15%)、灵感潜力(20%)
+| Step | 产出 | 融合组件 |
+|:----|:-----|:--------:|
+| 1.0 雷达市场调研 | `radar/radar-report.md` | 📡 Radar |
+| 1.1 种子概念 | — | — |
+| 1.2 世界设定 | `foundation/world.md` | — |
+| 1.3 角色档案（含自动改名提议） | `foundation/characters.md` | 🆕 原创 |
+| 1.4 章节大纲 | `foundation/outline.md` | — |
+| 1.5 叙事声音（量化风格指纹） | `foundation/voice.md` | 🖊️ Writer |
+| 1.6 硬设数据库（含伏笔追踪表） | `foundation/canon.md` | — |
+| 1.7 评分门控 | `foundation/scores.md` | — |
 
 ### Phase 2：初稿（First Draft）
 
-**目标：** 逐章撰写初稿，每章质量门控。
-
-- 每章独立文件 `chapters/ch_01.md`、`chapters/ch_02.md`……
-- 每章自评 ≥ 6.0 才保留，否则重写（最多 3 次）
-- 每 3 章一次一致性检查（更新 canon.md）
-- 每完成 25% 输出阶段性报告
+| Step | 产出 | 融合组件 |
+|:----|:-----|:--------:|
+| 2.0 准备工作 | `state.json` / `chapters/` / `runtime/` | — |
+| 2.1b 编排师上下文编译 | `runtime/ch_NN/context.md` | 📦 Composer |
+| 2.2 逐章撰写（字数治理） | `chapters/ch_NN.md` | 🖊️ Writer |
+| 2.2a 批量委托（≥20章） | 多篇章节并行 | 🆕 原创 |
+| 2.2b 观察者事实提取 + 伏笔检测 | `runtime/character-registry.md` / update canon.md | 🔍 Observer |
+| 2.3 章节间一致性检查 | 更新 canon.md | — |
 
 ### Phase 3：修改循环（Revision）
 
-**分为两个子阶段：**
-
 #### Phase 3a：自动化修改
 
-| 步骤 | 内容 | 产出 |
-|------|------|------|
-| 对抗式编辑 | AI 味检测 + 结构套路 + 冗余 + 过度解释 + 情节漏洞 | `revision/editorial-notes.md` |
-| 读者小组评审 | 4 个 agent 并行扮演：文学评论家、普通读者、类型爱好者、编辑 | `revision/reader-reviews.md` |
-| 生成修改简报 | 按优先级整理修改项 | `revision/revision-brief.md` |
-| 逐条重写 | 按简报修改章节文件 | 更新章节 |
+| 步骤 | 产出 |
+|:----|:-----|
+| 3a.1 对抗式编辑（37维度，3 worker 并行） | `revision/editorial-notes.md` |
+| 3a.2 读者小组评审（4人格并行） | `revision/reader-reviews.md` |
+| 3a.3 修改简报（优先级排序） | `revision/revision-brief.md` |
+| 3a.4 逐条重写 | 更新章节 |
+| 3a.5 全局角色改名（全名/裸称替换） | 更新全部文件 |
 
 #### Phase 3b：深度审阅循环
 
-- 合并完整手稿 → 双人格（文学评论家 + 写作教授）深度审阅
-- 逐条修复 → 重新合并 → 再次审阅
-- 当「无明显缺陷」条目 ≥ 90% 时退出循环
+| 步骤 | 产出 |
+|:----|:-----|
+| 3b.0 剧情修改确认（clarify三选项） | 用户确认 |
+| 3b.1 合并完整手稿 | `manuscript-draft.md` |
+| 3b.2 双人格深度审阅 | `revision/deep-review.md` |
+| 3b.2b 字数治理修复 | `revision/word-governance-report.md` |
+| 3b.3 逐个修复循环（连续执行模式） | `revision/fix-log.md` |
 
 ### Phase 4：导出（Export）
 
 - 合并最终手稿 → `manuscript.md`
 - 输出统计报告 → `manuscript-stats.md`
-- 可选：导出 epub、生成封面文案、角色关系图谱
+- 可选：epub 导出 / 封面文案 / 角色关系图谱
+
+---
+
+## 📜 版本演进史
+
+本技能从 v1.0.0 初始版本发展至 v1.10.0，经历了多轮 InkOS 组件融合和原创功能开发。
+
+### 版本时序
+
+```mermaid
+timeline
+    v1.0.0 : 初始创建
+            : NousResearch/autonovel 五层架构
+            : 基础 Phase 1-4 流水线
+    v1.3.0 : 🔴 InkOS Auditor 融合
+            : 37维度审计框架
+            : 伏笔追踪表
+    v1.4.0 : 🖊️ InkOS Writer 融合
+            : 量化风格指纹
+            : 字数治理体系
+    v1.5.0 : 📡 InkOS Radar 融合
+            : 市场调研流程
+    v1.6.0 : 📦 InkOS Composer 融合
+            : 上下文编译
+    v1.7.0 : 🔍 InkOS Observer 融合
+            : 7类事实提取
+            : 伏笔自动检测
+    v1.8.x : 🆕 原创功能爆发
+            : 角色自动改名提议
+            : 剧情修改确认三选项
+            : 连续执行模式
+    v1.9.x : 🆕 批量委托策略
+            : delegate_task 并行写作
+            : 后处理验证脚本
+            : session resume 健康检查
+    v1.10.0 : 🆕 实战沉淀期
+             : 字数治理修复流程
+             : 并行审计策略
+             : 实战案例参考
+```
+
+### 各版本详细说明
+
+#### v1.0.0 — 初始版（2026-05-27）
+
+**核心能力：**
+- 参考 NousResearch/autonovel 五层协同架构（voice/world/characters/outline/chapters + canon）
+- 四阶段流水线：Foundation → Draft → Revision → Export
+- 评分门控机制：foundation_score ≥ 7.5 准入，章节自评 ≥ 6.0
+- 基础模板：world.md / characters.md / outline.md / canon.md
+- 反模式检测：anti-patterns.md / anti-slop.md
+
+**文件数：** 8（SKILL.md + README.md + 4 templates + 2 references）
+**SKILL.md 字数：** ~22,000 字
+
+---
+
+#### v1.3.0 — InkOS Auditor 融合 🔴（2026-06-04）
+
+**新增能力：**
+- 37维度对抗式审计框架（V1-V37），从格式化表格升级为实时扫描
+- 伏笔追踪表（pending_hooks）：🟢已回收 / 🟡待回收 / 🔴逾期未收 / ⚪艺术留白 四态
+- 输出五层分级：🔴硬伤 → 🟡角色 → 🟢结构 → 📌套路 → 🔍小问题
+- 输出格式从重复的维度编号改为分层聚合，每层标题 + 具体问题
+
+**新增文件：** adversarial-review-framework.md（~8,800 字 37 维度框架）
+
+---
+
+#### v1.4.0 — InkOS Writer 融合 🖊️（2026-06-08）
+
+**新增能力：**
+- voice.md 量化风格指纹：句长分布 / 段落密度 / 对话占比 / 高频字 / 禁忌词
+- 字数治理体系（InkOS 保守写原则）：5级偏差处理 + `--words N` 覆盖
+- scripts/style-fingerprint.py 文风量化脚本
+- templates/voice.md 模板（含量化模板字段）
+
+**新增文件：** scripts/style-fingerprint.py, references/word-governance.md, templates/voice.md
+
+---
+
+#### v1.5.0 — InkOS Radar 融合 📡（2026-06-10）
+
+**新增能力：**
+- Step 1.0 雷达市场调研：种子概念 → 类型定位 → 市场扫描 → 竞争分析 → 差异化机会
+- web_search 自动搜索同类作品 + 抽取读者槽点
+- references/radar-report-template.md 完整报告模板
+
+**新增文件：** references/radar-report-template.md
+
+---
+
+#### v1.6.0 — InkOS Composer 融合 📦（2026-06-12）
+
+**新增能力：**
+- Step 2.1b 编排师上下文编译：纯文件读取生成约1000字精简上下文包
+- 写手只需读 context.md 即可开始写作，不需要每章重读全量 foundation
+- canon_stale 缓存失效标记：foundation 变动时自动标记，Composer 自动重读
+- templates/context-pack.md 上下文包模板（must do / must avoid 清单）
+
+**新增文件：** templates/context-pack.md
+
+---
+
+#### v1.7.0 — InkOS Observer 融合 🔍（2026-06-13）
+
+**新增能力：**
+- Step 2.2b 观察者 7 类事实提取：新角色 / 时间 / 地点 / 财物 / 系统 / 关系 / 伏笔
+- 伏笔自动检测：每写完一章即扫描新埋伏笔，追加到 pending_hooks
+- templates/character-registry.md 角色出场登记表
+- conservative update 原则：硬事实写入 canon.md，软信息只记到 register
+
+**新增文件：** templates/character-registry.md
+
+---
+
+#### v1.8.x — 原创功能爆发期 🆕（2026-06-14 ~ 2026-06-16）
+
+**新增能力（InkOS 无等价物）：**
+- **角色自动改名提议**（Step 1.3a）：AI 检测角色名是否套路化/撞名/时代错位，clarify三选项确认
+- **年代特征审查**：七零/八零/九零年代命名特征表
+- **剧情修改确认**（Step 3b.0）：改前展示修改计划，clarify 三选项（全部/选择性/暂不）
+- **连续执行模式**：修复中发现新问题不打断，记入 fix-log 统一汇报
+
+---
+
+#### v1.9.x — 批量委托策略落地 🆕（2026-06-17 ~ 2026-06-24）
+
+**新增能力（InkOS 无等价物）：**
+- **delegate_task 并行写作**：每片 ≤ 10 章，54 章 2 轮完成
+- **后处理验证脚本**：禁用词 / 加粗 / 字数 / 句式 四重验证
+- **session resume 健康检查**：文件系统 vs state.json 自动同步
+- **超时误判处理**：delegate_task 600s 超时 ≠ 文件丢失
+
+**新增文件：** references/batch-delegation-benchmark.md（54章实测基准数据）
+
+---
+
+#### v1.10.0 — 实战沉淀期 🏆（2026-06-25 ~ 至今）
+
+**新增能力：**
+- **字数治理修复流程**（Step 3b.2b）：深改前先治理字数偏差，生成治理报告
+- **33→37 维度修正**：修复第三方 SKILL.md 缓存导致的维度错误
+- **并行审计策略**：3 worker 分组审计 37 维度（A: 系统设定+细节/B: 角色/C: 结构+创造）
+- **style-cleanup-protocol.md**：加粗削减 / 禁用词清零 / 章节扩展 三类修复流程
+- **adversarial-review-case-study.md**：42章年代文完整审查实战案例（14个问题 / 5类高频修复模式）
+- **实战经验教训文档化**：version-history.md 完整记录每个版本的已知问题和教训
+
+**新增文件：** references/style-cleanup-protocol.md, references/adversarial-review-case-study.md, references/inkos-fusion-pattern.md, references/version-history.md
+
+---
+
+### 版本升级路径
+
+| 版本 | 核心变化 | 升级影响 |
+|:----|:---------|:---------|
+| v1.0.0 → v1.3.0 | Auditor 融合 | 新增 references/adversarial-review-framework.md |
+| v1.3.0 → v1.4.0 | Writer 融合 | 新增 voice.md 量化模板 + scripts/ + word-governance.md |
+| v1.4.0 → v1.5.0 | Radar 融合 | 新增雷达报告模板（可选流程） |
+| v1.5.0 → v1.6.0 | Composer 融合 | 新增 runtime/ 目录和上下文编译流程 |
+| v1.6.0 → v1.7.0 | Observer 融合 | 新增 character-registry.md + 伏笔自动检测 |
+| v1.7.0 → v1.8.x | 原创功能 | 新增改名提议 + 修改确认 + 连续执行 |
+| v1.8.x → v1.9.x | 批量委托 | 新增 delegate_task 并行 + 验证脚本 |
+| v1.9.x → v1.10.0 | 实战沉淀 | 新增案例文档 + 并行审计 + 字数治理修复 |
+
+---
+
+### 实战教训总结
+
+| 教训 | 版本出现 | 根因 | 修复 |
+|:----|:--------:|:-----|:-----|
+| 33→37 维度不匹配 | v1.10.0 | 引用第三方 SKILL.md 缓存而非上游 README | 上游 README 优先原则 |
+| delegate_task 超时误判 | v1.9.x | 600s 限制在汇报阶段触发，文件已写入 | 超时后确认文件存在再决定是否重试 |
+| state.json 与实际文件不同步 | v1.9.x | 多轮修改后未更新 state | session resume 时自动遍历恢复 |
+| read_file 行号前缀写入损坏 | v1.8.x | 显示输出直接传给 write_file | 先 strip 行号前缀再写入 |
 
 ---
 
 ## 📂 完整文件结构
 
+### 技能本身（Hermes 技能目录）
+
+```
+~/.hermes/skills/creative/autonovel-workflow/
+├── SKILL.md                        # 主技能文档（v1.10.0，~63KB）
+├── README.md                       # 本文件（项目说明 + 版本演进史）
+├── references/                     # 参考文档（10 个文件）
+│   ├── version-history.md          #   版本沿革完整记录
+│   ├── adversarial-review-framework.md   #   37维度审计框架
+│   ├── adversarial-review-case-study.md  #   42章年代文实战案例
+│   ├── batch-delegation-benchmark.md     #   54章批量委托基准数据
+│   ├── style-cleanup-protocol.md         #   文风清理协议
+│   ├── inkos-fusion-pattern.md           #   InkOS 融合模式指南
+│   ├── anti-patterns.md                  #   结构套路检测
+│   ├── anti-slop.md                      #   文风反注水清单
+│   ├── radar-report-template.md          #   雷达报告模板
+│   └── word-governance.md                #   字数治理详细说明
+├── templates/                      # 模板文件（7 个）
+│   ├── world.md / characters.md / outline.md / voice.md / canon.md
+│   ├── character-registry.md / context-pack.md
+└── scripts/
+    └── style-fingerprint.py        # 文风量化分析脚本
+```
+
+### 项目运行时（小说创作目录）
+
 ```
 ~/novels/<小说名称>/
-├── foundation/
-│   ├── world.md              # 世界设定
-│   ├── characters.md         # 角色档案
-│   ├── outline.md            # 章节大纲
-│   ├── voice.md              # 叙事声音
-│   ├── canon.md              # 硬设数据库
-│   └── scores.md             # 地基评分记录
-├── chapters/
-│   ├── ch_01.md              # 第1章
-│   ├── ch_02.md              # 第2章
-│   ├── ...
-│   └── ch_NN.md              # 第N章
-├── revision/
-│   ├── editorial-notes.md    # 对抗式编辑记录
-│   ├── reader-reviews.md     # 读者评审记录
-│   ├── revision-brief.md     # 修改简报
-│   ├── deep-review.md        # 深度审阅记录
-│   └── fix-log.md            # 修复日志
-├── manuscript.md             # 最终合并手稿
-├── manuscript-stats.md       # 手稿统计报告
-└── state.json                # 写作进度状态
+├── foundation/                     # 地基文件
+│   ├── world.md / characters.md / outline.md / voice.md / canon.md / scores.md
+├── radar/                          # 市场调研报告
+│   └── radar-report.md
+├── chapters/                       # 小说正文
+│   ├── ch_01.md / ch_02.md / ...
+├── runtime/                        # 运行时缓存
+│   ├── ch_NN/context.md + character-registry.md
+├── revision/                       # 修改记录
+│   ├── editorial-notes.md / reader-reviews.md / revision-brief.md / deep-review.md / fix-log.md
+│   └── word-governance-report.md
+├── manuscript.md                   # 最终合并手稿
+├── manuscript-stats.md             # 手稿统计
+└── state.json                      # 写作状态
 ```
 
 ---
@@ -261,38 +399,35 @@ Hermes 会自动生成：
 
 | # | 陷阱 | 后果 | 解决 |
 |---|------|------|------|
-| 1 | 地基不够就开写 | 写到一半发现设定矛盾/角色平庸 | 严格执行评分门控 ≥ 7.5 |
-| 2 | 评分走过场 | 低质章节累积到后期修复成本高 | 自评时诚实地问「读到这章会觉得被坑了吗？」 |
-| 3 | 过度修改 | 作品失去生气，或永远完不成 | 设定退出条件：无明显缺陷 ≥ 90% |
-| 4 | 忽视向上反馈 | 设定矛盾越积越多 | 每3章强制执行一致性检查 |
-| 5 | 声音漂移 | 第一章和最后一章像两个人写的 | 写每章前重读 voice.md |
-| 6 | 章节太长或太短 | 节奏失控 | 目标字数范围 1500-3000 字/章 |
-| 7 | 角色行为不一致 | 角色失真，读者失去代入感 | 写前重读对应角色档案 |
+| 1 | 地基不够就开写 | 设定矛盾/角色平庸 | 严格执行评分门控 ≥ 7.5 |
+| 2 | 评分走过场 | 低质章节累积 | 自评时诚实问自己 |
+| 3 | 过度修改 | 作品失去生气 | 无明显缺陷 ≥ 90% 退出 |
+| 4 | 忽视向上反馈 | 设定矛盾积压 | 每3章一致性检查 |
+| 5 | 声音漂移 | 首尾像两人写的 | 写前重读 voice.md |
+| 6 | 章节过短/过长 | 节奏失控 | 字数治理 2000-3500 字/章 |
+| 7 | 角色不一致 | 读者失去代入感 | 写前重读角色档案 |
+| 8 | state.json 不同步 | 进度数据丢失 | session resume 自动修复 |
+| 9 | delegate_task 超时误判 | 重复工作 | 先确认文件存在 |
+| 10 | 忘记更新 manuscript-stats | 进度报告过时 | 每次 Phase 边界更新 |
 
 ---
 
 ## ❓ FAQ
 
-**Q：我需要准备 API Key 吗？**
-A：不需要。本技能完全基于 Hermes Agent 自身的文件操作、子任务分发和文本生成能力，无需任何额外的 API Key。
+**Q：需要 API Key 吗？**
+A：不需要。完全基于 Hermes Agent 自身能力。
 
-**Q：最多能写多长的小说？**
-A：取决于 Hermes Agent 的 context window 大小。建议 32K+ tokens 用于中篇（10-15章），128K+ 用于长篇（20章以上）。
+**Q：最多能写多长？**
+A：取决于 context window。32K+ 用于中篇，128K+ 用于长篇。
 
 **Q：可以中途手动修改吗？**
-A：可以！所有文件都是标准 markdown，你可以随时手动编辑任何文件。修改后继续运行工作流即可。
-
-**Q：写了一半想换大纲怎么办？**
-A：修改 `foundation/outline.md`，然后重新启动 Phase 2。注意 canon.md 中的设定需要同步更新。
-
-**Q：可以导出为 epub 格式吗？**
-A：Phase 4 提供可选扩展，需要系统安装 `pandoc` 或 `calibre` 命令行工具。
+A：可以！所有文件都是标准 markdown。修改后继续运行即可。
 
 **Q：AI 味很重怎么办？**
-A：本技能自带了 `references/anti-slop.md`（词汇/句式/结构级 AI 味检测清单）和 `references/anti-patterns.md`（叙事结构反模式检测），在 Phase 3a 的对抗式编辑中会使用它们。你也可以单独加载 `humanizer` 技能作为补充。
+A：本技能自带 anti-slop.md 和 anti-patterns.md 检测清单。也可搭配 `humanizer` 技能使用。
 
-**Q：怎么配合其他技能用？**
-A：建议搭配 `writing-plans` 技能进行写作前的详细规划，用 `humanizer` 技能增强文本的自然感。
+**Q：有实战案例吗？**
+A：有！`references/adversarial-review-case-study.md` 记录了 42 章年代文完整审查实战，`references/batch-delegation-benchmark.md` 记录了 54 章并行写作基准数据。
 
 ---
 
@@ -300,12 +435,17 @@ A：建议搭配 `writing-plans` 技能进行写作前的详细规划，用 `hum
 
 | 项目 | 说明 |
 |------|------|
-| 版本 | 1.0.0 |
+| 当前版本 | **v1.10.0** |
+| 迭代次数 | 9 个版本（v1.0.0 → v1.10.0） |
+| InkOS 组件融合 | 6 个（Auditor / Writer / Radar / Composer / Observer / 字数治理） |
+| 原创功能 | 8 个（改名提议 / 年代审查 / 修改确认 / 连续执行 / 批量委托 / 后处理验证 / session resume / 评分门控） |
+| 总文件数 | 20（含 SKILL.md / README.md / 10 references / 7 templates / 1 script） |
+| SKILL.md 字数 | ~63,000 字 |
 | 作者 | Hermes Agent |
 | 协议 | MIT |
 | 分类 | creative（创意写作） |
-| 标签 | novel, writing, fiction, worldbuilding, character-design, outline, revision, editing |
+| 标签 | novel, writing, fiction, worldbuilding, character-design, outline, revision, editing, inkos-fusion |
 
 ---
 
-*由 autonovel-workflow 自动生成*
+*由 autonovel-workflow 自动生成 · 版本演进记录详见 `references/version-history.md`*
