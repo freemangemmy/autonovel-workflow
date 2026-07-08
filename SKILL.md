@@ -1236,7 +1236,9 @@ autonovel-workflow 多处引用 InkOS 项目。当整合或引用外部项目时
 
 ---
 - **版本沿革参考：** `references/version-history.md` 记录完整版本演进、InkOS 融合时间线、原创功能清单、已知问题与实战教训。执行 session resume 或新接入项目前可先读此文件了解技能能力边界。
+- ⚠️ **README.md 必须同步更新版本历史。** 每次发布新版本或同步到 GitHub 时，在项目根目录 README.md 中建立「版本演进史」章节（含 timeline / 表格 / 升级路径 / 实战教训），不要只放在 references/version-history.md。用户需要 README.md 一眼看到全部版本迭代历程。
 - **结构套路检测：** 参考本技能自带的 `references/anti-patterns.md`
+- **AI 高频词句检测库（可扩充）：** `references/anti-slop.md` 是活库，可按规范向 1.1 🟡/1.2 🔴/1.3 身体动作模板三个分区追加新词组（需附替换建议）。新增条目自动参与下一轮 Phase 3 扫描。分类规则：≥90 分→🔴禁区区，80-89→🟡黄色警告，模式化身体动作→1.3。评分可选（0-100 高频评分）。
 - **文风清理协议：** `references/style-cleanup-protocol.md` 记录了 Phase 3 产出审计报告后执行加粗削减、禁用词清零、章节扩展三类修复的完整流程和替换策略。实测对 54章/138,000字 项目有效，三类修复依次覆盖
 - **实战案例参考：** `references/adversarial-review-case-study.md` 记录了本技能对一个42章年代文完成的完整审查实战，包含14个实际问题的分布统计和5类高频修复模式。执行对抗式编辑前可先读此案例了解常见问题模式和修复思路\n- **批量委托实战参考：** `references/batch-delegation-benchmark.md` 记录了 Phase 2 用 `delegate_task` 批量撰写 54 章初稿的完整方案、分片策略、超时处理和关键教训。执行批量写作前可参考此数据设计委托方案
 - **模板文件：** 本技能自带的 `templates/` 目录下有 world.md、characters.md、outline.md、canon.md（含伏笔追踪表）、voice.md（含量化风格指纹模板）等模板，可作为 foundation 阶段的起始点
