@@ -1,8 +1,8 @@
 ---
 name: autonovel-workflow
 title: 全自动小说创作工作流
-description: 全自动小说创作流水线 — 从一句话灵感种子出发，经过雷达市场调研（InkOS Radar Agent 融合）、世界构建、角色设计（含自动改名提议）、章节大纲、编排师上下文编译（InkOS Composer 融合）、初稿撰写（含 InkOS 字数治理）、观察者事实提取（InkOS Observer 融合）、37维度对抗式编辑（融合InkOS审计体系）、读者评审、深度审阅（含剧情修改确认+连续执行模式），最终导出完整手稿。参考 NousResearch/autonovel 的五层协同架构 + InkOS 37-dimension audit 体系，完全基于 Hermes Agent 自身能力实现，无需任何外部 Python 脚本或 API Key。
-version: 1.10.0
+description: 全自动小说创作流水线 — 从一句话灵感种子出发，经过雷达市场调研（InkOS Radar Agent 融合）、世界构建、角色设计（含自动改名提议）、章节大纲、规划师意图声明+编排师控制面编译+可编辑提示词包+材料归档检索（InkOS Input Governance 融合）、初稿撰写（含 InkOS 字数治理）、观察者事实提取（InkOS Observer 融合）、37维度对抗式编辑（融合InkOS审计体系）、读者评审、深度审阅（含剧情修改确认+连续执行模式），最终导出完整手稿。另含短篇模式（Short Story Run）：轻量地基→批量撰稿→5维审阅→导出简介卖点+封面提示词，一次跑完。参考 NousResearch/autonovel 的五层协同架构 + InkOS 37-dimension audit + InkOS Short Run 体系，完全基于 Hermes Agent 自身能力实现，无需任何外部 Python 脚本或 API Key。
+version: 1.15.0
 author: Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -479,10 +479,12 @@ This is what's true. 以下事实不可违背，任何写作中发现矛盾必�
 
 ```bash
 mkdir -p chapters
-mkdir -p runtime        # Composer 输出的上下文缓存
+mkdir -p runtime        # 编排师输出的上下文缓存
+mkdir -p prompt         # 可编辑提示词包（可选覆盖）
+mkdir -p materials      # 材料归档库（可选）
 ```
 
-**创建 `state.json`，包含字数治理字段：**
+**创建 `state.json`，包含字数治理和输入治理字段：**
 
 ```json
 {
@@ -502,6 +504,11 @@ mkdir -p runtime        # Composer 输出的上下文缓存
       "ch_01": {"target": 2500, "actual": null, "ok": null},
       "ch_NN": {"target": 2500, "actual": null, "ok": null}
     }
+  },
+  "input_governance": {
+    "mode": "v2",
+    "last_intent_hash": null,
+    "last_compose_hash": null
   }
 }
 ```
@@ -522,34 +529,93 @@ mkdir -p runtime        # Composer 输出的上下文缓存
 
 > **InkOS 保守写原则：** 对于不确定篇幅的场景，**默认少写**（偏短勿长）。短了可以在 Phase 3 容易地扩张，长了砍起来很痛苦。短章扩展比长章压缩容易 10 倍。
 
-### Step 2.1b：编排师上下文编译 📦 *InkOS Composer Agent 融合*
+### Step 2.1b：规划师+编排师管线 (Plan → Compose) 🧠 *InkOS Input Governance 融合*
 
-> 在写手动笔之前，编排师将分散的 foundation 文件 + 上章 + 状态编译为一个**上下文包**。
-> 写手只需读这个包，不需要每次都重读全量 foundation 文件。大幅减少 token 消耗和心智负担。
+> 在写手动笔之前，分两步编译控制面输入：
+> 1. **规划师 (Plan)** — 读 foundation + 上章 + 状态，生成本章意图声明（intent.md）
+> 2. **编排师 (Compose)** — 读 intent + foundation + 状态，编译上下文包（context.md）+ 规则栈（rule-stack.yaml）+ 编译轨迹（trace.json）
+>
+> 写手只需读 compose 产物，不再读全量 foundation 文件。控制面文件可审核、可编辑、不混进 LLM prompt。
 
-**执行时机：** 每章撰写前执行一次。第一章在 Step 2.1 之后执行；后续章节在上章完成后、下章开始前执行。
+**执行时机：** 每章撰写前执行。第一章做一次；后续章节在上章完成后、下章开始前执行 plan→compose 两步。
 
-**输入：** `foundation/*.md` + `state.json` + `chapters/ch_{NN-1}.md`（上一章）
+---
 
-**输出：** `runtime/ch_{NN}/context.md`（精简上下文 ≈ 800-1200 字）
+#### Step 2.1b-1：规划师意图声明 (Plan)
 
-**编译流程（不依赖 LLM，纯文件读取+信息提取）：**
+**输入：** `foundation/*.md` + `state.json` + `chapters/ch_{NN-1}.md`（上章结尾）+ 当前 `foundation/outline.md` 中的本章大纲
 
-1. **读 outline.md：** 提取本章大纲（POV、核心事件、悬念、字数目标）
-2. **读 voice.md：** 提取「一、量化风格指纹」的关键指标（句长目标、禁忌词）和「五、禁忌清单」
-3. **读 canon.md：** 提取「不可违背的事实」中与本章 POV/场景相关的条目，提取 `pending_hooks` 表中状态为 🟡/🔴 的伏笔
-4. **读上一章（如有）：** 提取结尾 1-2 段（上章结束时的状态，即本章开头要衔接的地方）
-5. **读 characters.md：** 提取本章出场角色的**当前状态和行为基线**
-6. **编译 context.md：** 使用 `templates/context-pack.md` 模板填充上述信息
+**输出：** `runtime/ch_{NN}/intent.md`（本章意图声明 ≈ 300-500 字）
+
+**执行流程：**
+
+1. **读作者意图：** 提取 `foundation/voice.md` 的核心风格规则、`foundation/canon.md` 的活跃硬设
+2. **读本章大纲：** 从 `foundation/outline.md` 提取本章的 POV、核心事件、悬念、字数目标
+3. **读上章结尾：** 上章末段（时间/地点/未解决事件）
+4. **编译 intent.md：** 使用模板 `templates/chapter-intent.md`
+
+**intent.md 模板：**
+
+```markdown
+# 第{NN}章意图声明
+
+## 本章目标
+- {一句话描述本章在故事中的功能}
+
+## 必须保留 (must keep)
+- {POV：不得偏离的视角}
+- {核心事件：必须推进的情节}
+- {基调：必须维持的情感氛围}
+
+## 必须避免 (must avoid)
+- {硬设违背：不能破坏 canon.md 中的某项规则}
+- {声音漂移：不能使用某类词汇/句式}
+- {节奏陷阱：不能写太密/太散}
+
+## 可能冲突
+- {如果 A 发生，B 设定可能矛盾 → 处理方式}
+```
+
+> **意图声明不用于生成正文，只用于方向对齐。** Compose 基于它选择上下文，Writer 基于它确认方向。用户或 AI 可以随时编辑 intent.md 来微调方向，不需要重跑 plan。
+
+---
+
+#### Step 2.1b-2：编排师上下文编译 (Compose)
+
+**输入：** `runtime/ch_{NN}/intent.md` + `foundation/*.md` + `state.json` + `chapters/ch_{NN-1}.md`（上一章）
+
+**输出：** `runtime/ch_{NN}/` 下的三件套：
+- `context.md` — 精简上下文（≈ 800-1200 字），供 Writer 直接阅读
+- `rule-stack.yaml` — 规则优先级链（章节级 > 卷级 > 书级 > 通用）
+- `trace.json` — 输入编译轨迹（哪个文件读了哪些内容、为何选入/排除）
+
+**编译流程（纯文件读取+信息提取，不调用 LLM）：**
+
+1. **读 intent.md：** 提取 must-keep / must-avoid / conflicts
+2. **读 outline.md：** 提取本章大纲（POV、核心事件、悬念、字数目标）
+3. **读 voice.md：** 提取量化风格指纹（句长目标、禁忌词）和禁忌清单
+4. **读 canon.md：** 提取与本章 POV/场景相关的「不可违背的事实」，提取 pending_hooks 中状态 🟡/🔴 的伏笔
+5. **读上一章（如有）：** 提取结尾 1-2 段（衔接点）
+6. **读 characters.md：** 提取本章出场角色的当前状态和行为基线
+7. **编译 context.md：** 使用 `templates/context-pack.md` 模板填充
+8. **编译 rule-stack.yaml：** 按优先级声明规则来源
+9. **编译 trace.json：** 记录每个信息的来源文件和选择理由
 
 **context.md 结构和内容量控制：**
 
 ```markdown
 # 上下文 · 第N章
 
+> 由编排师自动编译。来源：intent.md + outline + voice + canon + 上章
+
 ## 章节基本信息
 | POV | 字数目标 | 场景类型 |
 |:----|:--------:|:--------:|
+
+## 本章意图概要
+- 核心任务：{从 intent.md 提取}
+- must-keep：{1-2 条最关键的}
+- must-avoid：{1-2 条最关键的}
 
 ## 活跃硬设（仅本章相关）
 - （从 canon.md 中滤取，不超过 5 条）
@@ -560,8 +626,8 @@ mkdir -p runtime        # Composer 输出的上下文缓存
 - （从 voice.md 中滤取，不超过 5 条）
 
 ## 本场角色
-| 角色 | 入章状态 | 行为禁忌 |
-|:----|:---------|:---------|
+| 角色 | 入章状态 | 行为禁忌 | 声台形表锚点 |
+|:----|:---------|:---------|:------------|
 
 ## 与上章衔接
 - 时间/地点
@@ -572,18 +638,308 @@ mkdir -p runtime        # Composer 输出的上下文缓存
 ### ❌ 本章禁止出现
 ```
 
+**rule-stack.yaml 格式**（规则优先级：数字越小优先级越高）：
+
+```yaml
+# 规则栈 - 第NN章
+# 优先级: 1=最高(章节级), 5=最低(通用)
+rules:
+  - priority: 1
+    source: "intent.md"
+    scope: "chapter"
+    rule: "必须回避 POV_A → 用 POV_B 推进"
+  - priority: 2
+    source: "outline.md"
+    scope: "chapter"
+    rule: "本章核心事件：XXXX"
+  - priority: 3
+    source: "canon.md:不可违背的事实"
+    scope: "chapter"
+    rule: "魔法需要等价交换"
+  - priority: 4
+    source: "voice.md:量化风格指纹"
+    scope: "book"
+    rule: "短句占比 ≥ 40%"
+  - priority: 5
+    source: "autonovel-workflow:通用规则"
+    scope: "global"
+    rule: "禁用词：忽然、好像、忍不住、突然、猛地、却"
+```
+
+**trace.json 格式**（输入编译轨迹，用于调试和回溯）：
+
+```json
+{
+  "chapter": "NN",
+  "composed_at": "2026-07-07T12:00:00Z",
+  "sources": [
+    {"file": "runtime/ch_NN/intent.md", "purpose": "意图方向", "selected": true},
+    {"file": "foundation/outline.md", "purpose": "POV+核心事件", "selected": true},
+    {"file": "foundation/voice.md", "purpose": "风格指纹+禁忌", "selected": true},
+    {"file": "foundation/canon.md", "extracted": ["不可违背事实 3条", "pending_hooks 2条"], "selected": true},
+    {"file": "foundation/characters.md", "extracted": ["角色A状态", "角色B状态"], "selected": true},
+    {"file": "chapters/ch_XX.md", "purpose": "上章衔接", "selected": true}
+  ],
+  "excluded": [
+    {"file": "foundation/world.md", "reason": "本章不涉及新地点/生态"}
+  ]
+}
+```
+
 > **直接写！** context.md 不追求完美排版。关键是**让写手在 30 秒内知道自己要写什么、有什么限制**。信息精确优先，格式次之。
->
-> **缓存失效规则：** 如果 foundation 文件在上次编译后有修改（如 canon.md 新增了设定），State.json 标记 `canon_stale: true`，编排师在下一次编译时重新读取。此标记在 Step 2.3 一致性检查后自动更新。
+
+> **rule-stack.yaml 不用于生成正文**，只作为审阅和调试的参考。当 Writer 或 Auditor 发现规则冲突时，按优先级数字解决——数字越小越优先。
+
+> **trace.json 不用于写作**，只在 Step 3a 对抗式编辑和排错时用于回答「为什么本章有/没有某个信息」。
+
+> **缓存失效规则：** foundation 文件在上次编译后有修改（如 canon.md 新增设定），state.json 标记 `canon_stale: true`，编排师在下一次编译时重新读取。intent.md 被用户手动修改后，下一次 compose 直接读取最新 intent 而不需要重新 plan。
+
+---
+
+#### Step 2.1b-3：控制面文件维护规则
+
+| 文件 | 谁维护 | 何时更新 | 可否人工编辑 |
+|:----|:-------|:---------|:-----------|
+| `intent.md` | 规划师自动生成 | 每章 plan 时 | ✅ 可编辑，修改后 compose 自动使用最新版 |
+| `context.md` | 编排师自动编译 | 每章 compose 时 | ❌ 不直接编辑——改 intent.md 后重跑 compose |
+| `rule-stack.yaml` | 编排师自动编译 | 每章 compose 时 | ❌ 不直接编辑 |
+| `trace.json` | 编排师自动编译 | 每章 compose 时 | ❌ 不直接编辑 |
+
+> **推荐工作流：** 如果写完 context.md 后觉得方向不对，不要直接改 context.md——去改 intent.md（加/删 must-keep/must-avoid），然后重跑 compose。这样 control surface 始终保持可审核的一致性。
+
+---
+
+#### Step 2.1b-4：旧项目兼容说明
+
+已有项目的 state.json 中如果没有 `input_governance` 字段，视为 `mode: "legacy"`，走原有的单步 compose 流程。当用户首次执行新项目或第一次在旧项目上写新章时，系统自动初始化 `input_governance` 字段并切换到 `mode: "v2"`。**向后兼容，不影响已有章节。**
+
+### Step 2.1c：可编辑提示词包 📝 *InkOS Editable Prompt Packs 融合*
+
+> 将写手/审计师/编排师等 agent 的核心提示词外置为独立文件，用户可直接编辑调整。
+> 不必修改 SKILL.md，也不影响其他项目。
+
+#### 提示词包结构
+
+```
+prompt/                         # 项目级提示词包覆盖目录（可选）
+├── writer.md                   # 写手提示词——章节撰写指令
+├── planner.md                  # 规划师提示词——intent.md 生成指令
+├── composer.md                 # 编排师提示词——上下文编译指令
+├── auditor.md                  # 审计师提示词——37维度审计指令
+└── reviser.md                  # 修订师提示词——修复执行指令
+```
+
+每个文件对应一个 agent 的核心 prompt。如果文件存在，agent 在运行时使用该文件内容替代内置默认提示词；如果不存在，使用 SKILL.md 中内置的默认值。
+
+#### 加载规则（三层层叠）
+
+| 优先级 | 来源 | 示例 |
+|:------|:-----|:-----|
+| 1（最高） | `prompt/<agent>.md` | `prompt/writer.md` |
+| 2 | 项目 `.inkos/prompts/`（InkOS 兼容） | 跨项目共享时使用 |
+| 3（内置默认） | SKILL.md 中内置的系统提示 | 始终存在作为 fallback |
+
+**查找顺序：** 先查 `prompt/<agent>.md` → 查到就用 → 查不到用内置默认。
+
+#### 何时编辑提示词包
+
+| 场景 | 建议编辑的文件 | 例子 |
+|:-----|:-------------|:-----|
+| 写手风格需要强约束 | `prompt/writer.md` | 增加「每段不超过3句」规则 |
+| 审计维度需要加权重 | `prompt/auditor.md` | 把「伏笔回收率」权重从5%提到15% |
+| 编排师需要排除某类文件 | `prompt/composer.md` | 让编排师不加载 `foundation/world.md` 中的地理部分 |
+| 规划师意图生成方向偏了 | `prompt/planner.md` | 调整「必须避免」的默认模板结构 |
+
+#### 编辑原则
+
+1. **不覆盖核心逻辑** — 只微调语气/侧重/约束，不改 agent 的行为流程（如「先读intent再读outline」这种流程不放在prompt里）
+2. **保持 diff 可追踪** — 只在文件头部添加注释说明改了什么、为什么改。例如：
+   ```markdown
+   <!-- 2026-07-07 枫火：增加段落长度限制，因为对话场景太多长段落 -->
+   - 每段不超过5句
+   - 对话段落不超过3句
+   ```
+3. **可以回退** — 删除 prompt 目录下的对应文件即可恢复内置默认值，不需要重装技能
+
+#### 示例：写手提示词包（prompt/writer.md）
+
+```markdown
+# Writer Prompt — 写手提示词
+# 当存在此文件时，写手使用以下规则替代内置默认值。
+# 删除此文件即可恢复内置默认。
+
+## 风格约束
+- 每段不超过5句
+- 对话段落不超过3句
+- 动作场景以短句（≤12字）为主
+
+## 禁止行为
+- 不要在段落开头重复上一段末句信息
+- 不要使用「就这样」「于是」「接下来」等转场词
+- 角色对话中不要出现说明性长篇独白
+
+## 字数提示
+目标字数在 context.md 的「章节基本信息」表中。
+偏短勿长：字数不够可以在 Phase 3 扩张，写长了不好砍。
+```
+
+> **默认不创建这些文件。** 提示词包是**按需添加**的——只有当用户对某个 agent 的输出方向有明确调整需求时才创建对应文件。项目初始化时 `prompt/` 目录为空，所有 agent 使用内置默认值。
+
+### Step 2.1d：材料归档与证据检索 📁 *InkOS Material Archive & Evidence Trace 融合*
+
+> 在写作/审阅过程中，外部资料（市场调研报告、设定参考、年代数据、技术文档等）可以沉淀到项目材料库，不再反复复制粘贴到 prompt 中。
+> Compose 编排师在做上下文编译时，自动从材料库中检索与本章相关的条目，作为额外上下文注入。
+
+#### 材料库结构
+
+```
+materials/
+├── 01-市场调研/                    # 素材按主题分组，编号仅用于排序
+│   ├── README.md                  # 本组说明（可选）
+│   ├── 末世小说热销趋势.md         # 单条材料——来源可追溯
+│   └── 灵气复苏设定对比.md
+├── 02-年代数据/
+│   ├── README.md
+│   ├── 2039年经济指标.txt
+│   └── 地下交通系统参考.md
+├── 03-技术参考/
+│   └── 纳米植入技术原理.md
+└── index.json                     # 材料索引，自动维护（见下文）
+```
+
+**每条材料文件的要求：**
+
+```markdown
+# 材料标题
+
+> **来源**：URL 或 文档名称
+> **归档日期**：2026-07-07
+> **标签**：末世, 设定, 科技
+
+正文内容……
+
+---
+
+**证据标记**：`mat-03-01`（用于 trace.json 中追踪引用）
+```
+
+**关键规则：**
+- 每条材料正文顶部必须包含元信息块（来源、归档日期、标签）
+- 证据标记格式：`mat-<分组编号>-<条目编号>`，全局唯一
+- 不限制格式（.md .txt .csv 均可），但强烈建议用 Markdown 以便渲染
+
+#### 材料索引（index.json）
+
+```json
+{
+  "groups": [
+    {
+      "id": "01",
+      "name": "市场调研",
+      "created": "2026-07-07",
+      "items": [
+        {"id": "mat-01-01", "file": "末世小说热销趋势.md", "title": "末世小说热销趋势", "tags": ["末世", "市场"]},
+        {"id": "mat-01-02", "file": "灵气复苏设定对比.md", "title": "灵气复苏设定对比", "tags": ["设定", "灵气"]}
+      ]
+    },
+    {
+      "id": "02",
+      "name": "年代数据",
+      "created": "2026-07-07",
+      "items": [
+        {"id": "mat-02-01", "file": "2039年经济指标.txt", "title": "2039年经济指标", "tags": ["经济", "年代"]}
+      ]
+    }
+  ]
+}
+```
+
+#### 归档流程
+
+**何时归档：**
+
+| 触发事件 | 示例 | 归档目标 |
+|:---------|:-----|:---------|
+| 雷达扫描完成 | Step 1.0 跑出 radar-report.md | 复制到 `materials/市场调研/` |
+| 用户提供了参考文档 | 「这是某平台的热门标签数据」 | 保存到对应分组 |
+| 写作中发现需要查证 | 「装甲车的时速是多少」 | 搜索→整理→归档 |
+| 对抗式编辑需要外部验证 | 「这个设定在现实中是否合理」 | 搜索→归档→在审计报告中引用 |
+
+**归档步骤：**
+
+1. 创建或确认分组目录存在（`materials/<分组名>/`）
+2. 写入材料文件（包含元信息块 + 证据标记）
+3. 更新 `materials/index.json`（添加条目到对应分组的 items 数组）
+
+> **简单原则：** 不要为了让材料库看起来整齐花太多时间。一段话的笔记也可以归档，关键是**让信息不再是对话历史中的一次性内容**。
+
+#### 证据检索（与 Compose 的联动）
+
+`Step 2.1b-2（Compose）` 的编译流程增加一步：
+
+```
+原流程:  读 intent.md → 读 outline → 读 voice → 读 canon → 读上章 → 读 characters → 编译 context.md
+新流程:  读 intent.md → 读 outline → 读 voice → 读 canon → 读上章 → 读 characters
+          → 6b. 检索材料库: 根据本章 POV/场景/标签，在 materials/index.json 中匹配相关材料
+          → 6c. 读取匹配材料的标题+摘要（不读全文，控制 token）
+          → 编译 context.md（在「活跃硬设」后追加「相关材料参考」区块）
+```
+
+**context.md 中新增的材料参考区块：**
+
+```markdown
+## 相关材料参考（材料库检索结果）
+
+| 证据标记 | 标题 | 标签 | 摘要 |
+|:--------|:-----|:----|:-----|
+| mat-01-01 | 末世小说热销趋势 | 末世, 市场 | 2026年Q2数据：末日流+系统流占比持续上升 |
+| mat-02-01 | 2039年经济指标 | 经济, 年代 | 通胀率5.2%, 失业率4.1% |
+```
+
+> **不读全文：** context.md 只包含材料标题+摘要（每条约 30-50 字）。如果 Writer 或 Auditor 在撰写/审阅中需要完整内容，单独去 `materials/` 目录下读取对应文件。
+> 这个设计控制了 context.md 的大小——即使材料库有 30 条材料，context.md 也只增加约 1-2KB。
+
+#### trace.json 中的材料引用
+
+Compose 输出 trace.json 时，将材料检索的记录加入：
+
+```json
+{
+  "chapter": 1,
+  "sources": [
+    {"file": "runtime/ch_01/intent.md", ...},
+    {"file": "materials/mat-01-01.md", "purpose": "市场趋势参考", "evidence": "mat-01-01", "selected": true},
+    {"file": "materials/mat-02-01.md", "purpose": "年代数据验证", "evidence": "mat-02-01", "selected": false}
+  ],
+  "material_searches": {
+    "query_tags": ["末世", "年代", "科技"],
+    "results_found": 3,
+    "selected_for_context": 1,
+    "excluded": ["mat-02-01 — 本章不涉及具体年代数据"]
+  }
+}
+```
+
+#### 对抗式编辑中的材料引用
+
+Step 3a（对抗式编辑）中，Auditor 在评价设定合理性/时代准确性时，可以引用材料库中的条目作为论据：
+
+```markdown
+| V29 | 时代准确性 | mat-02-01 显示2039年通胀率5.2%，本章写「物价飞涨」缺乏数据支撑 | 第3章 | 添加具体数据或模糊处理 |
+```
+
+> **材料库不是必须的。** 如果没有归档材料，Compose 跳过检索步骤，context.md 不包含材料参考区块。所有已有章节不受影响。
 
 ### Step 2.2：逐章撰写循环
 
 每个章节的撰写流程：
 
-1. **读取上下文包：** 读取 `runtime/ch_{NN}/context.md`。这就是本章需要的全部上下文，包含 POV、核心事件、活跃硬设、声音规则、角色状态、上章衔接。**不需要再读 foundation/*.md 的内容**
-2. **读取字数目标：** 从 `state.json` 的 `word_governance.per_chapter` 中读取当前章节的 `target` 值（如果与 context.md 有冲突，以 context.md 中的 override 为准）
-3. **撰写章节：** 遵循 voice.md 的叙事声音，参照 characters.md 的角色特点
-4. **字数治理检查（InkOS 保守写模式）：**
+1. **读取意图声明：** 快速浏览 `runtime/ch_{NN}/intent.md`，确认本章目标、must-keep、must-avoid。如需微调方向，直接编辑 intent.md 后重跑 compose（不需要回退到 plan）。
+2. **读取上下文包：** 读取 `runtime/ch_{NN}/context.md`。这就是本章需要的全部上下文，包含 POV、核心事件、意图概要、活跃硬设、声音规则、角色状态、上章衔接。**不需要再读 foundation/*.md 的内容**
+3. **读取规则栈（可选）：** 如果写作中出现规则冲突（如声音规则 vs 场景需求），查阅 `runtime/ch_{NN}/rule-stack.yaml` 按优先级解决——数字越小越优先。
+4. **读取字数目标：** 从 `intent.md`（优先）或 `state.json` 的 `word_governance.per_chapter` 中读取当前章节的 `target` 值
+5. **撰写章节：** 遵循 voice.md 的叙事声音，参照 characters.md 的角色特点，遵循 intent.md 的 must-keep/must-avoid 方向。当 intent.md 和 context.md 出现矛盾时，以 intent.md（规划师方向）为准。
+6. **字数治理检查（InkOS 保守写模式）：**
    计算章节实际字数（去空白后统计 `zh_chars` 中文字符数），与 `target` 对比：
 
    | 偏差 | 处理 | 说明 |
@@ -595,16 +951,16 @@ mkdir -p runtime        # Composer 输出的上下文缓存
    | **> 200% target** | 🔴 **严重超长** → 发出强警告，建议立即拆分或大幅压缩 | 写完了但必须大改 |
 
    > **`--words <N>` 覆盖：** 如果本章是高潮/名场面，可以在撰写前声明 `--words 4000` 覆盖默认 target，避免误报。覆盖值写入 state.json 的 `override` 字段。
-5. **自评章节质量（1-10）：** 基于以下维度：
+7. **自评章节质量（1-10）：** 基于以下维度：
    - 情节推进（本章是否推动了故事）
    - 角色表现（角色行为是否符合设定档案）
    - 文笔流畅度（句子节奏、用词是否自然）
    - 悬念与钩子（结尾是否有读下去的欲望）
-4. **门控判断：**
+8. **门控判断：**
    - **≥ 6.0：** 保留，保存为 `chapters/ch_{NN:02d}.md`
    - **< 6.0：** 标记为需重写，输出具体的修改方向，重新撰写
    - 最多重试 3 次，3 次后仍不合格则接受当前版本并备注
-6. **更新 state.json：** 检查 `completed_chapters`，更新 `current_chapter`。同时更新 `word_governance.per_chapter.ch_NN.actual` 为实际字数、`ok` 为治理结果。
+9. **更新 state.json：** 检查 `completed_chapters`，更新 `current_chapter`。同时更新 `word_governance.per_chapter.ch_NN.actual` 为实际字数、`ok` 为治理结果。
 
 ### Step 2.2a：批量委托策略（30+ 章长篇小说专用）🤝 *delegate_task 并行分发*
 
@@ -623,6 +979,7 @@ mkdir -p runtime        # Composer 输出的上下文缓存
    - `voice.md` 关键规则（短句比例、禁用词、对话标记方式、加粗金句限制）
    - `canon.md` 核心设定（系统规则、不可违背事实、年代经济参数）
    - 该批次的每章大纲：章节号、POV、核心事件、名场面、情感节点
+   - **控制面输入（可选但推荐）：** 如果该项目已有 `runtime/ch_NN/intent.md`（规划师意图声明），将其摘录给子任务而非让子任务自行编译——减少 token 消耗的同时保持方向一致
    - 明确标注哪些章节已有文件，不要覆盖
 
 3. **设置目标：** 每个子任务写明「需要写的文件：ch_XX.md ~ ch_YY.md，共 N 章」。**不要**一次性给子任务 15+ 章——它会在 600s 超时前勉强写完但无法汇报。
@@ -692,7 +1049,7 @@ for fname in targets:
 
 **输入：** 刚完成的 `chapters/ch_{NN}.md` + 现有的 `foundation/canon.md`
 
-**提取的 7 类事实：**
+**提取的 9 类事实（InkOS v1.6+ 扩展）：**
 
 | 类别 | 提取内容 | 更新目标 |
 |:----|:---------|:---------|
@@ -703,6 +1060,8 @@ for fname in targets:
 | ⚙️ **系统揭示** | 本章揭示的新系统规则/限制 | **追加到** `canon.md` 系统规则部分 |
 | 🔗 **关系变化** | 本章中出现的重要关系变动 | 更新 `runtime/character-registry.md` 分章记录 |
 | 🔮 **新伏笔** | 本章新埋下的伏笔/钩子 | **追加**到 `canon.md` 的 `pending_hooks` 表（状态=🟡） |
+| 💖 **情感状态** | 本章角色情感状态的显著变化（恐惧/希望/绝望/动摇等） | 仅记录到 `runtime/character-registry.md`，不写入 canon.md |
+| 📋 **物理状态** | 角色物品得失/装备变化/伤势/体力消耗等物理状态变化 | 更新 `runtime/character-registry.md`，影响后续行动能力的物理变化**追加到** `canon.md` |
 
 **执行规则：**
 
@@ -751,7 +1110,44 @@ for fname in targets:
 
 #### Step 3a.1：对抗式编辑
 
-> 对于 30+ 章的小说，**不要单次扫描**——让一个 agent 读 50 章 + 37 维度 + 输出有效报告极易撑爆 context 或给出空洞的泛评。使用并行审计策略（见下文）。
+##### 模式 A：全本/批量审计（30+ 章小说）
+
+> 使用并行审计策略（见下文），不要单次扫描全本。
+
+##### 模式 B：单章快速审计（用户修改后要求评审）
+
+适用于：用户提交了修改建议、你落地后，用户要求跑对抗式编辑的场景。不走 delegate_task 并行流程，在当前会话直接完成。
+
+**执行步骤：**
+
+1. **阅读 37 维度框架** — 加载 `references/adversarial-review-framework.md`，熟悉所有维度
+2. **运行自动化扫描** — 用 `terminal` 或 `execute_code` 运行以下检测：
+   ```bash
+   # 禁用词扫描（忽然/好像/忍不住/突然/猛地/然而/但是/却）
+   grep -n '忽然\|好像\|忍不住\|突然\|猛地\|然而\|但是\|却' <chapter.md>
+   
+   # 加粗计数（控制名场面标记密度）
+   grep -c '\*\*' <chapter.md>
+   
+   # AI味高频词扫描（不禁/仿佛/默默/微微/轻轻/似乎/或许）
+   grep -n '不禁\|仿佛\|不禁\|默默\|微微\|轻轻\|似乎\|或许' <chapter.md>
+   
+   # "看着"频率检测（建议单章≤5处，超过则需分散用词）
+   grep -c '看着' <chapter.md>
+   
+   # "却"禁用检测
+   grep -c '却' <chapter.md>
+   ```
+3. **逐维度评判** — 对 37 维度逐一过评，标注 ✅/⚠️/❌，每个 ⚠️ 或 ❌ 必须附带「位置+诊断+修改建议」
+4. **输出评分表** — 按五组给出维度组得分（V1-V8/V9-V16/V17-V23/V24-V28/V29-V37）+ 综合分
+5. **输出待修清单** — 按优先级排列：🔴 硬伤 > 🟡 角色一致性 > 🟢 结构性 > 📌 创造性 > 🔍 细节交付
+6. **记录报告** — 保存到 `revision/editorial-notes-<ch>.md`
+
+**模式 B 与全本审计的区别：**
+- 无需 delegate_task 并行分发
+- 逐维度过评而非选择性抽样
+- "看着"、"却"等词汇级检测是单章审计的特色（全本审计更关注跨章重复）
+- 修改建议要可执行——每条建议附带具体的替换文本（before/after）
 
 以「最严苛的批评者」身份通读全文，**使用 37 维度审计框架**（见 `references/adversarial-review-framework.md`）逐章扫描，每层输出具体问题+维度编号+示例+修改建议：
 
@@ -1092,7 +1488,13 @@ cat chapters/ch_*.md > manuscript.md
 - revision/word-governance-report.md — 字数治理报告（如执行过）
 - radar/radar-report.md — 市场调研报告（如执行过）
 - runtime/context.md — 各章上下文包（缓存，可重新生成）
+- runtime/intent.md — 各章意图声明（可编辑微调方向）
+- runtime/rule-stack.yaml — 各章规则栈（调试用）
+- runtime/trace.json — 各章编译轨迹（排错用）
+- prompt/writer.md — 写手提示词包覆盖（如配置）
 - runtime/character-registry.md — 角色出场登记表（观察者维护）
+- materials/ — 材料归档库（外部资料沉淀，可选）
+- materials/index.json — 材料索引（如已归档）
 ```
 
 ### Step 4.3：可选扩展
@@ -1102,6 +1504,216 @@ cat chapters/ch_*.md > manuscript.md
 - 生成封面文案和小说简介
 - 生成后续续集/系列扩展建议
 - 输出角色关系图谱（Mermaid.js 格式）
+
+---
+
+## 短篇模式（Short Story Mode）⚡ *InkOS Short Run 融合优化版*
+
+> 独立短篇不走完整 4-Phase 长篇管线——太慢了。
+> 短篇模式是轻量版：快速建角色→一次写完→轻审→导出包含简介卖点+封面提示词。
+
+**何时使用：** 3-12 章、每章 500-2000 字的独立短篇。超过这个量建议走完整长篇管线。
+
+**与完整管线的核心差异：**
+
+| 维度 | 长篇管线 | 短篇模式 |
+|:-----|:--------|:---------|
+| Foundation 文件 | 5件套 + 评分门控 | 仅 characters.md + outline.md |
+| 每章流程 | Plan → Compose → Draft | 一次 delegate_task 批量写完 |
+| 审计 | 37维度 + 读者评审 | 5维度轻量检查 |
+| 修改循环 | 多轮 | 最多1轮 |
+| 导出 | manuscript.md | manuscript.md + sales-package.md + cover-prompt.md |
+| 总 Token 消耗 | 高 | 低（约1/5） |
+
+### 执行流程
+
+#### Step S0：输入方向
+
+由用户提供一句话 premise。例如：
+> "都市婚姻反转短篇：女主结婚三年发现老公和小三密谋转移财产，她提前拿到账本证据，在离婚协议上反杀。"
+
+如果用户输入不完整，引导补全以下信息：
+- **故事方向**（1-3句话）
+- **章节数**（默认 6 章）
+- **每章字数**（默认 1200 字）
+
+#### Step S1：快速地基
+
+创建轻量 foundation，只写**必要的内容**：
+
+**`foundation/characters.md`**（仅核心角色，不要求深层需求/弧光/谎言等）：
+
+```markdown
+# 角色档案（短篇）
+
+## 主角：林晚
+- 28岁，全职主妇，结婚三年
+- 表面温顺，内有乾坤。算账型人格
+- 发现老公转移财产后，冷静收集证据，准备反击
+
+## 配角：赵铭
+- 32岁，创业公司CEO，林晚的老公
+- 自以为掌控一切，实则核心资产全靠老婆娘家早期投资
+- 出轨对象：公司财务刘心怡
+
+## 配角：陈律师
+- 林晚的大学同学，离婚律师
+- 专业、冷静，帮林晚设计财产保全方案
+```
+
+**`foundation/outline.md`**（每章1-2行，不写悬念/钩子/节奏等）：
+
+```markdown
+# 章节大纲（短篇）
+
+总章节数：6章 | 每章字数：约1200字
+
+第1章：发现端倪 — 林晚整理家务时发现银行流水异常
+第2章：暗中查证 — 跟踪赵铭，确认出轨+转移资产
+第3章：收集证据 — 找陈律师，设计财产保全方案
+第4章：摊牌 — 林晚主动约赵铭谈话，出示证据
+第5章：离婚协议 — 谈判桌上的心理博弈，林晚反杀
+第6章：新生 — 离婚后的林晚，开自己的工作室
+```
+
+> **不做 world.md / voice.md / canon.md**——短篇信息量小，直接放在 outline 和 characters 里就够了。
+>
+> **不做评分门控**——短篇追求效率，地基差不多就开写。
+
+#### Step S2：批量撰写
+
+**一次 delegate_task 写完所有章节**（不逐章 Plan→Compose→Draft）：
+
+```markdown
+子任务 instructions:
+1. 读取 characters.md 和 outline.md
+2. 一次性写完第1章到第{ N }章
+3. 每章保存为 chapters/ch_NN.md
+4. 每章完成后做字数检查（目标±30%）
+5. 遵循禁用词：不出现「突然」「好像」「仿佛」「忽然」「忍不住」「猛地」「却」
+6. 不写大段环境描写，每段不超过5句
+7. 对话标记用行动式，极少「XX说」
+```
+
+**字数治理规则（短篇宽松版）：**
+
+| 偏差 | 处理 |
+|:----|:-----|
+| < 50% target | 🔴 严重不足，补写到 ≥ 60% |
+| 50-130% target | 🟢 合格 |
+| > 130% target | 🟡 超长，标记留待审阅决定 |
+
+> **为什么不做逐章 Plan→Compose？** 短篇每章字数少（500-2000字），Plan→Compose 的 overhead（每章读 intent→读 outline→读 voice→编译 context→写）比写正文本身还重。用一次 delegate_task 把全篇写完，上下文一致性好，还省 token。
+
+#### Step S3：轻量审阅
+
+**5维度快速检查，不跑 37 维审计，不跑读者评审：**
+
+| 维度 | 检查内容 |
+|:-----|:---------|
+| 情节逻辑 | 故事有没有硬伤？起承转合完整吗？ |
+| 角色一致性 | 角色行为是否符合出场设定？ |
+| 文笔合规 | 禁用词零命中？对话自然？节奏不拖？ |
+| 悬念/钩子 | 开头抓人吗？结尾有回味吗？ |
+| 整体完成度 | 字数达标？结尾收住了吗？ |
+
+**格式：**
+
+```markdown
+# 轻量审阅报告 · 《短篇名》
+
+| 维度 | 评分 | 问题 |
+|:-----|:---:|:-----|
+| 情节逻辑 | 8/10 | 第4章摊牌场景赵铭反应不够真实 |
+| 角色一致性 | 7/10 | 林晚在第2章的行为偏被动，与后期人设不符 |
+| 文笔合规 | 9/10 | 禁用词零命中 |
+| 悬念/钩子 | 8/10 | 开头有力，结尾还可以更利落 |
+| 整体完成度 | 8/10 | 字数达标，情绪弧线完整 |
+
+**修改建议：**
+- P1 第4章赵铭的反应加一句心理破防描写
+- P2 第2章林晚查账时加一个主动决策时刻
+- P3 第6章结尾砍掉最后一段抒情
+```
+
+**修改执行：** 按优先级逐一修复。最多 1 轮，不循环。
+
+#### Step S4：导出三件套
+
+##### 1. 合并手稿
+
+```bash
+cat chapters/ch_*.md > manuscript.md
+```
+
+##### 2. 生成简介卖点（sales-package.md）
+
+```markdown
+# 简介卖点 · 《短篇名》
+
+## 一句话梗概
+{用一句话说清楚核心冲突和反转}
+
+## 完整简介（200-300字）
+{适合发布到平台的简介正文}
+
+## 卖点标签
+{3-5个标签，如：婚姻反转|爽文|女主觉醒|短篇}
+
+## 适合平台
+- 小红书：{适配小红书风格的推荐语}
+- 抖音：{适配抖音口播风格的推荐语}
+- 番茄/晋江：{适配网文平台的推荐语}
+```
+
+##### 3. 生成封面提示词（cover-prompt.md）
+
+```markdown
+# 封面提示词 · 《短篇名》
+
+## 英文提示词（用于 AI 生图）
+{A detailed prompt for AI image generation}
+
+## 中文描述
+{简洁的中文画面描述}
+
+## 推荐风格
+{都市/古风/悬疑/言情/...}
+
+## 配色建议
+{主色调+辅助色说明}
+```
+
+> **为什么多这两个文件？** 短篇的核心场景是发布（小红书/抖音/番茄），不是存档。sales-package.md 和 cover-prompt.md 是发布时的刚需——写完整篇之后最头疼的两件事（怎么写简介、配什么图），一次生成。
+
+### 短篇模式目录结构
+
+```
+~/novels/shorts/<短篇名>/
+├── foundation/
+│   ├── characters.md         # 轻量角色档案
+│   └── outline.md            # 章节大纲
+├── chapters/
+│   ├── ch_01.md
+│   ├── ...
+│   └── ch_NN.md
+├── revision/
+│   └── light-review.md       # 轻量审阅报告
+├── manuscript.md             # 完整手稿
+├── sales-package.md          # 简介卖点
+└── cover-prompt.md           # 封面提示词
+```
+
+### 新旧短篇流程对比
+
+| 步骤 | 完整管线跑短篇（旧） | 短篇模式（新） |
+|:-----|:------------------|:--------------|
+| Foundation | Phase 1 全量5件套 + 评分门控 | 仅 characters + outline |
+| 每章撰写 | 逐章 Plan→Compose→Draft | 一次 delegate_task 全写完 |
+| 审计 | 37维 + 读者评审并行 | 5维轻量检查 |
+| 修改 | 多轮循环 | 最多1轮 |
+| 导出 | 仅 manuscript.md | + sales-package.md + cover-prompt.md |
+| 预估耗时 | 30-60分钟 | 5-10分钟 |
 
 ## 目录结构示例
 
@@ -1116,13 +1728,37 @@ cat chapters/ch_*.md > manuscript.md
 │   └── scores.md
 ├── radar/                          # （可选）Step 1.0 雷达扫描报告
 │   └── radar-report.md
-├── runtime/                        # Composer 编译的上下文缓存 + Observer 数据
+├── runtime/                        # 输入治理控制面 + Observer 数据
 │   ├── ch_01/
-│   │   └── context.md
+│   │   ├── intent.md               # 规划师：本章意图声明（可编辑）
+│   │   ├── context.md              # 编排师：精简上下文（自动编译）
+│   │   ├── rule-stack.yaml         # 编排师：规则优先级链
+│   │   └── trace.json              # 编排师：输入编译轨迹
 │   ├── ...
 │   └── ch_NN/
-│       └── context.md
+│       ├── intent.md
+│       ├── context.md
+│       ├── rule-stack.yaml
+│       └── trace.json
 │   └── character-registry.md       # 观察者维护的出场登记表
+├── prompt/                         # （可选）可编辑提示词包覆盖
+│   ├── writer.md
+│   ├── planner.md
+│   ├── composer.md
+│   ├── auditor.md
+│   └── reviser.md
+├── materials/                       # （可选）材料归档库
+│   ├── 01-市场调研/
+│   │   └── 末世小说热销趋势.md
+│   ├── 02-年代数据/
+│   │   └── 2039年经济指标.txt
+│   └── index.json
+├── shorts/                          # （可选）短篇模式产出
+│   └── <短篇名>/
+│       ├── foundation/{characters,outline}.md
+│       ├── chapters/
+│       ├── sales-package.md
+│       └── cover-prompt.md
 ├── chapters/
 │   ├── ch_01.md
 │   ├── ch_02.md
@@ -1199,6 +1835,189 @@ cat chapters/ch_*.md > manuscript.md
 **后果：** 角色失真，读者失去代入感。
 **解决：** 写每章前重读 characters.md 中出场角色的档案。在 Phase 3a 的对抗式编辑中重点检查。
 
+### 🚫 陷阱 12：章节重排后旧版「僵尸文本」残留
+
+**表现：** 在已有章节序列中插入新的前置章节（如重写第1章、新增序章）后，后续章节中仍保留着与新前提冲突的旧版描述——例如 ch_02 仍展示旧版招募签约场景，与新版 ch_01 的内容完全矛盾。
+
+**后果：** 读者在新旧版之间感到断裂——ch_01 已经讲了冯枫怎么签约、怎么拿到手环，ch_02 又从头讲一遍不一样的版本。最坏情况：同一角色有两种不同版本的起源故事。
+
+**根因诊断：** 章节重排时，旧 ch_01 被复制为 ch_02，但它的开篇部分引用了旧版前提（招募、签约、能力选择），这些引用在新版 ch_01 中已经被替代或修改了。**文件被复制了，但前提被更新了——复制体成了僵尸。**
+
+**解决：**
+
+1. **rename/copy 后必须检查「旧版前提相关片段」**。重点检查的字段：
+   - 角色登场方式（新版 vs 旧版的差异）
+   - 装备描述（如「黑色金属手环」→「皮下光纹」、「注射式植入」→「纳米节点」）
+   - 能力获取方式（新版是「公司匹配推荐」vs 旧版是「菜单选择」）
+   - 招募/签约场景（如果有，必须剪掉——这部分已属于新版前置章节）
+   
+2. **标准的连续性检查清单：**
+   ```python
+   # 在章节重排后运行
+   old_refs = ['黑色手环', '金属手环', '灰色制服', '菜单', '选择能力', 
+               '技能库', '被抽中了', '金属桌子']
+   for ref in old_refs:
+       if ref in content:
+           print(f'⚠️ 旧版引用残留: {ref}')
+   ```
+
+3. **过渡句替代方案：** 剪掉旧版场景后，不能直接留空白。用 1-3 行过渡句替代：
+   > 「三个小时前还在签合同，三个小时后被空投到雨林里」
+   > 这一句就把 ch_01 的场景结论带进 ch_02 的起点，不需要重新展示签约。
+
+4. **小纲也必须跟进：** 小纲_第N章.txt 如果引用了旧版事件顺序（如「签约→园区→……」），在章节重排后需要更新章节编号和事件引用。
+
+### 🚫 陷阱 13：第一个词就踩禁词
+
+**表现：** 整章写得流畅自然，但第一句/第一个场景中就出现了禁用词（如「站台突然变了味」中的「突然」）——这是在 draft 阶段最容易被漏掉的违规类型，因为开头句往往写得很顺手，不会主动触发审稿意识。
+
+**根因：** 写手 agent 在生成正文时专注于场景构建和节奏，容易把「突然」「猛地」「仿佛」等看似自然的起笔词混进开篇。这些词在阅读时不易察觉问题，但会累积到 Phase 3 才暴露。
+
+**解决：**
+1. **draft 完成后立即扫描** — 在自评步骤（Step 2.2 第8步门控判断）之前，先跑一次禁用词扫描，而不是等对抗式编辑再发现。实测脚本：
+
+```python
+import re
+path = 'chapters/ch_NN.md'
+with open(path) as f:
+    c = f.read()
+forbidden = ['忽然','好像','忍不住','突然','猛地','然而','但是','却']
+hits = {w: c.count(w) for w in forbidden if w in c}
+emotions = {w: c.count(w) for w in ['愤怒','悲伤','恐惧','害怕'] if w in c}
+old_refs = {}  # 根据项目实际情况填入旧版遗骸词
+print(f"禁用词: {hits if hits else '✅'}")
+```
+
+2. **重点检查前100字** — 禁用词最容易出现在章节开头（开场白、过渡句、第一句动作描写）和段落结尾（转折连词「然而」「但是」「却」）。前 100 字和后 100 字是高发区，优先排查。
+
+3. **零容忍** — 发现即修。常用替换：「突然」→ 删除或改为「就在这时候」；「猛地」→ 删除；「忍不住」→「没忍住」或重写为动作；「却」→ 用断句替代（句号断开比转折连接更符合动作节奏）。
+
+### 🚫 陷阱 14：连续 patch 编辑导致上下文损坏
+
+**表现：** 在一章内发现多处问题（禁用词、情绪词、旧版遗骸），用 `patch` 工具依次修复。第二次或第三次 patch 时，虽然返回了成功的 diff，但实际替换的内容与预期不符——旧字符串匹配到了错误的行，导致上下文出现重复行或语法断裂。
+
+**根因：** `patch` 使用模糊匹配（9 种策略）。当一个文件中存在多个相似的文本片段（例如同一角色名出现多次，或同一句式结构在多个段落出现），后续 patch 的 old_string 可能匹配到已被前一次 patch 修改过的文本，而不是目标位置。
+
+**解决：**
+1. **每轮只修一个文件中的一个问题** — 执行 `patch` 后立即 `read_file` 验证该处修改结果，确认正确后再执行下一个。不要在一个 turn 中发送3-5个连续 patch。
+2. **加入足够上下文** — old_string 包含目标行 + 前后各1行（共3行），确保唯一性。仅靠单独一行文本匹配容易误匹配。
+3. **发现异常后检查全文件** — 如果某次 patch 的 diff 看起来比预期长或短，立即 read_file 检查该区域，不要假设成功。
+4. **重构方案** — 如果一章内需要修复超过3处，优先考虑替换策略：直接用 `execute_code` 编写 Python 脚本批量修复（正则匹配+替换），而非逐个 patch。
+
+**实战案例（2026-07-07）：** 测试 plan→compose→draft 管线时，ch_01.md 开头有「站台突然变了味」。第一轮 patch 替换了「突然」但错误地同时将下文的「周小姐看着他的眼睛」对话也替换掉了，导致对话台词丢失。需要用第二轮 patch 找回丢失文本。第三次修复时改用「前+后各1行」的 old_string 格式，一次性正确修复。
+
+### 🚫 陷阱 14：文件属主错误（root vs 用户）
+
+**表现：** foundation/、chapters/、runtime/ 等目录下的文件 owner 为 root，用户在宿主机无法直接编辑。
+
+**根因：** Hermes Agent 在 root 环境下运行，write_file 创建的文件 owner 是 root。
+
+**解决：** 在 Phase 2 写完一批章节后或 Phase 4 导出前执行一次：
+```bash
+chown -R gemmt:Users /vol1/1000/data/ai文案/novels/<项目名>/
+```
+`chown` 命令在此环境中可用。确认项目路径存在后执行即可。也可以在 Step 2.1（准备阶段）直接加入 chown 步骤预防此问题。
+
+### 🚫 陷阱 11：项目目录用了章节名而非书名
+
+**表现：** 创建小说项目目录时，直接用了第一幕/第一章的标题（如「营救苏允儿」）作为 `~/novels/` 下的目录名，而非正式书名（如「末日降临，末世游戏」）。
+
+**后果：** 后续需要重命名目录、修改所有文件中的书名引用、更新 state.json 的 novel_name 字段——增加不必要的操作成本。
+
+**解决：**
+1. **创建目录前，先问用户书名。** 如果用户只提供了章节名而非书名，在创建 `~/novels/<name>/` 之前明确询问：「这本小说的正式书名是什么？」
+2. 如果用户说「先用这个名字」，在 state.json 备注字段标注 `"provisional_title": true`，后续确认正式书名后再更正
+3. 书名中包含特殊字符（如书名号、冒号、逗号）时，用下划线替代——`~/novels/末日降临_末世游戏/` 而非 `~/novels/《末日降临，末世游戏》/`
+4. 如果已经建错了，修正流程：先改 foundation/*.md 和 state.json 中的书名引用 → 重命名目录 → 更新文件名（如 `大纲_旧书名.txt` → `大纲_新书名.txt`）→ grep 零残留验证
+
+## InkOS v1.6.x 融合路线图（v1.12.0 评估）
+
+> 以下路线图基于 2026-07-07 对 [Narcooo/inkos](https://github.com/Narcooo/inkos) 上游 v1.6.2 版本的全量 README 分析。
+
+### 当前已对齐项（无需额外融合）
+
+| InkOS 组件 | 版本 | autonovel 状态 |
+|:----------|:----|:--------------|
+| 审计员 Auditor（37维） | v1.3 | ✅ 已对齐（v1.10 修正33→37） |
+| 写手 Writer + 文风指纹 | v1.4 | ✅ 已对齐 |
+| 字数治理 | v1.4 | ✅ 已对齐 |
+| 雷达 Radar | v1.5 | ✅ 已对齐 |
+| 编排师 Composer | v1.6 | ✅ 已对齐 |
+| 观察者 Observer | v1.7 | ✅ 已对齐（7→9 类扩展） |
+
+### 待融合项（按优先级排列）
+
+#### Phase 1（🔴 推荐立即融合）：输入治理控制面
+
+**InkOS 做法：** 写章前走 `plan → compose → draft` 三层管线。plan 生成 `intent.md`（本章目标/保留项/避免项/冲突处理），compose 编译 `context.json`（实际选入上下文）、`rule-stack.yaml`（规则优先级链）、`trace.json`（输入编译轨迹）。控制面可编辑、可审核，不混进 prompt。
+
+**融合方案：**
+```
+runtime/ch_NN/
+├── intent.md          # 本章意图声明（must-keep / must-avoid / conflict-handling）
+├── rule-stack.yaml    # 规则优先级链（章节 > 卷 > 书级 > 通用）
+└── trace.json         # 输入编译轨迹（哪个文件读了哪些内容）
+```
+**现有基础：** Step 2.1b 已输出 `context.md`，在此基础上增量补全三件套即可。
+**工作量：** 约 3-4 小时，不影响现有项目。
+
+#### Phase 2（🟡 建议近期融合）：可编辑提示词包
+
+**InkOS 做法：** Studio 项目设置 → 提示词可查看和调整 longform/Play 等内置 prompt pack。`prompt/<pack>/<prompt>.md` 项目级覆盖，不覆盖内置默认值。
+
+**融合方案：** 创建 `prompt/` 目录：
+```
+prompt/
+├── writer.md       # 写手提示词
+├── auditor.md      # 审计提示词  
+├── reviser.md      # 修订提示词
+└── composer.md     # 编排师提示词
+```
+SKILL.md 中的提示词片段改为从 `prompt/` 读取，默认值内置在 SKILL.md 作为 fallback。
+**工作量：** 约 1-2 小时。
+
+#### Phase 3（🟢 低难度高价值）：材料归档与证据检索
+
+**InkOS v1.6.2 新能力：** 外部材料可保存到项目材料库，后续写作/讨论中带 evidence trace 检索引用，不用反复复制粘贴。
+
+**融合方案：** 新增 `materials/` 目录，Step 2.1b 中增加材料检索步骤。
+**工作量：** 约 1-2 小时。
+
+#### Phase 4（🟡 中难度）：长期记忆三件套（投影文件先行）
+
+**InkOS 做法：** `story/state/*.json`（权威结构化）+ `story/*.md`（人类可读投影）+ `story/memory.db`（SQLite 时序记忆库）
+
+**融合方案：**
+1. 升级 `state.json` → `state/` 目录结构化状态
+2. 新增 `chapter_summaries.md` 和 `character_matrix.md` 投影
+3. SQLite 记忆库暂缓（Hermes 非 Node 环境）
+**工作量：** 4-6 小时（需迁移旧项目 state.json）
+
+#### Phase 5（🟢 中难度）：同人创作系统
+
+**InkOS 做法：** `inkos fanfic init` 四种模式（canon/au/ooc/cp），正典导入器，同人专属审计维度。
+
+**融合方案：** 新增 Step 2.0b 同人初始化入口，复用 Phase 1-4 流水线。
+**工作量：** 3-5 小时。
+
+### 暂缓融合项
+
+| 功能 | 原因 |
+|:----|:-----|
+| **Reflector JSON delta** | Hermes 工具层无法直接处理增量写入 |
+| **互动影游（分支剧情/变量旗标）** | 偏离小说创作核心，适合独立 Skill |
+| **守护进程自动写章** | Hermes cronjob 已有等效能力 |
+| **多模型路由** | Hermes config.yaml 已支持，无需额外 Skill 逻辑 |
+| **Skill 可插拔系统** | 与 Hermes 自身技能体系重叠，引入会增加心智负担 |
+
+### 本次评估元数据
+
+- **评估日期：** 2026-07-07
+- **InkOS 分析版本：** v1.6.2（最新 commit 84b61bd，2 天前发布）
+- **已检查版本区间：** v1.5.0 → v1.6.0 → v1.6.1 → v1.6.2
+- **关键新发现：** 输入治理控制面（最大差距）、可编辑提示词包（易融合）、材料归档检索（低难度高价值）
+- **参考文件：** `references/inkos-v1.6-fusion-roadmap.md`（完整评估报告）
+
 ## 验证清单
 
 执行完所有 4 个 Phase 后，逐一核对以下清单：
@@ -1224,7 +2043,6 @@ cat chapters/ch_*.md > manuscript.md
 - [ ] 小说中没有与 canon.md 矛盾的内容
 - [ ] 角色行为符合 characters.md 中的设定
 - [ ] 叙事风格与 voice.md 保持一致
-└── state.json
 
 ## 参考
 
@@ -1236,14 +2054,21 @@ autonovel-workflow 多处引用 InkOS 项目。当整合或引用外部项目时
 
 ---
 - **版本沿革参考：** `references/version-history.md` 记录完整版本演进、InkOS 融合时间线、原创功能清单、已知问题与实战教训。执行 session resume 或新接入项目前可先读此文件了解技能能力边界。
-- ⚠️ **README.md 必须同步更新版本历史。** 每次发布新版本或同步到 GitHub 时，在项目根目录 README.md 中建立「版本演进史」章节（含 timeline / 表格 / 升级路径 / 实战教训），不要只放在 references/version-history.md。用户需要 README.md 一眼看到全部版本迭代历程。
+- **InkOS 融合路线图：** `references/inkos-v1.6-fusion-roadmap.md` 记录 v1.6.x 全版本评估结果、待融合功能（可编辑提示词包/材料归档/长期记忆投影）及其优先级和工作量预估。下次评估 InkOS 新版本时对照此文件决定是否融合。
 - **结构套路检测：** 参考本技能自带的 `references/anti-patterns.md`
-- **AI 高频词句检测库（可扩充）：** `references/anti-slop.md` 是活库，可按规范向 1.1 🟡/1.2 🔴/1.3 身体动作模板三个分区追加新词组（需附替换建议）。新增条目自动参与下一轮 Phase 3 扫描。分类规则：≥90 分→🔴禁区区，80-89→🟡黄色警告，模式化身体动作→1.3。评分可选（0-100 高频评分）。
 - **文风清理协议：** `references/style-cleanup-protocol.md` 记录了 Phase 3 产出审计报告后执行加粗削减、禁用词清零、章节扩展三类修复的完整流程和替换策略。实测对 54章/138,000字 项目有效，三类修复依次覆盖
-- **实战案例参考：** `references/adversarial-review-case-study.md` 记录了本技能对一个42章年代文完成的完整审查实战，包含14个实际问题的分布统计和5类高频修复模式。执行对抗式编辑前可先读此案例了解常见问题模式和修复思路\n- **批量委托实战参考：** `references/batch-delegation-benchmark.md` 记录了 Phase 2 用 `delegate_task` 批量撰写 54 章初稿的完整方案、分片策略、超时处理和关键教训。执行批量写作前可参考此数据设计委托方案
-- **模板文件：** 本技能自带的 `templates/` 目录下有 world.md、characters.md、outline.md、canon.md（含伏笔追踪表）、voice.md（含量化风格指纹模板）等模板，可作为 foundation 阶段的起始点
-- **风格指纹提取脚本：** `scripts/style-fingerprint.py` — InkOS-style 量化文风分析。有初稿章节后运行 `python3 scripts/style-fingerprint.py --dir chapters/` 提取句长分布、对话占比、高频字等数据注入 voice.md
+- **章节修改清单（7维实战准则）：** `references/chapter-revision-checklist.md` 记录了枫火对第一章的7条修改意见泛化而来的通用质量准则——事件因果逻辑、对话压缩、性格前置、场景过渡、句子简洁、词汇多样性、描述效率。每项含差/好对比表格和检查清单。Phase 3b 修改循环中可逐项核对
+- **批量委托实战参考：** `references/batch-delegation-benchmark.md` 记录了 Phase 2 用 `delegate_task` 批量撰写 54 章初稿的完整方案、分片策略、超时处理和关键教训。执行批量写作前可参考此数据设计委托方案
+- **管线验收测试流程：** `references/pipeline-test-flow.md` 记录了 plan→compose→draft 新管线的完整验收测试步骤、检查点和验证脚本模板。Phase 2 首次启用输入治理控制面时，可对照此文件逐项验证
+- **模板文件：** 本技能自带的 `templates/` 目录下有 world.md、characters.md、outline.md、canon.md（含伏笔追踪表）、voice.md（含量化风格指纹模板）、**chapter-intent.md（规划师意图声明模板）**、context-pack.md（编排师上下文包模板）等模板，可作为 foundation 和 Phase 2 阶段的起始点
+- **风格指纹提取脚本：** `scripts/style-fingerprint.py`
+- **单章合规验证脚本：** `scripts/verify-single-chapter.py` — 自动化 7 项检查（字数治理、禁用词、情绪词、AI 味句式、「看着」频率、加粗计数、旧版遗骸）。Phase 2 每章写完后建议运行一次 `python3 ~/.hermes/skills/creative/autonovel-workflow/scripts/verify-single-chapter.py chapters/ch_NN.md --target 3000 --old-refs 极速光纹 注射式 深渊科技`
+- **章节编辑修订标准（枫火专属）：** `references/chapter-editing-revision-criteria.md` — 基于实战提炼的7条可执行编辑标准，覆盖剧情逻辑、对话密度、人物铺垫、节奏过渡、句子简洁性、词汇多样性、场景描写精炼。Phase 2 初稿和 Phase 3 修改阶段均适用，每章完成后应参考此标准做一轮自检后再提交给用户。 — InkOS-style 量化文风分析。有初稿章节后运行 `python3 scripts/style-fingerprint.py --dir chapters/` 提取句长分布、对话占比、高频字等数据注入 voice.md
+- **章节重排参考：** `references/chapter-restructuring.md` 记录了在已有章节序列中插入、删除或重排章节的完整流程——文件重命名、内部标题更新、state.json 同步、大纲体系联动。当你需要新增前置章节、拆分超长章节或调整情节顺序时使用。
+- **声台形表角色驱动写作法：** `references/shengtai-table.md` 记录了角色卡中声音(声)、台词(台)、形体(形)、表情(表)四维度体系的模板和实战用法，以及在小纲中标注声台形表锚点的标准格式。Phase 1 角色设计和 Phase 2 初稿撰写阶段可配合 `templates/characters.md`（已包含声台形表模板）使用。
+- **使用说明书：** `references/usage-guide.md` 涵盖长篇管线、短篇模式、新增功能（输入治理控制面/可编辑提示词包/材料归档检索）的完整使用指南，以及常用指令速查表。
 - **Canon.md 最佳实践：** 在 Phase 1 创建 canon.md 时，不仅要列出「不可违背的事实」，还要明确记录**核心系统的精确规则**（包括数值、限制条件、触发逻辑），并在 Phase 2 写作过程中每3章核对一次。同时初始化**伏笔追踪表（pending_hooks）**，每写一章同步维护——新增伏笔填 🟡、已回收改 🟢。这能避免 Phase 3 才发现伏笔遗漏的硬伤。
+- **单章快速修改参考：** `references/single-chapter-revision-patterns.md` 收录了7个通用修改方向+2个微调案例（词频控制、台词自然度），来自实战。Phase 3b 逐章修复时可参照此清单自我审查——涵盖逻辑修补、对话压缩、性格铺垫、过渡增强、句子简洁、词频避免、结尾精简七个方向。
 - **写作规划：** 加载 `writing-plans` 技能进行写作前的详细规划
 - **进度管理：** 在 Phase 2 和 Phase 3 的长流程中，每完成一步向用户汇报进度
 - **文件管理：** 所有文件建议放在 `~/novels/<novel-name>/` 下，方便用户随时翻阅和手动修改

@@ -47,14 +47,49 @@ v1.9.x ──→ 批量委托策略落地
               delegate_task 并行写作（每片 ≤10 章）
               后处理验证脚本（禁用词/加粗/字数/句式）
               session resume 健康检查流程
-              文件系统 vs state.json 同步修复
-
-v1.10.0 ──→ 实战沉淀期
-              字数治理修复流程（Step 3b.2b，深改前治理）
               33→37 维度修正（见下方实战教训）
               并行审计策略（3 worker 分组审计 37 维度）
               实战案例参考（references/adversarial-review-case-study.md）
               批量委托基准数据（references/batch-delegation-benchmark.md）
+
+v1.10.x ──→ 实战沉淀期
+              字数治理修复流程（Step 3b.2b，深改前治理）
+              章节重排参考（references/chapter-restructuring.md）
+              声台形表角色驱动写作法（references/shengtai-table.md）
+              单章快速修改参考（references/single-chapter-revision-patterns.md）
+              Observer 从 7→9 类事实扩展（新增情感/物理状态）
+
+v1.12.0 ──→ 🧠 InkOS Input Governance 融合（2026-07-07）
+              评估覆盖 InkOS v1.5.0→v1.6.2 全版本
+              输入治理控制面：plan→compose 三层管线
+              intent.md：规划师意图声明（可编辑，compose 自动读新版）
+              rule-stack.yaml：规则优先级链（1=章节级→5=通用级）
+              trace.json：输入编译轨迹（每个信息的来源和选入理由）
+              templates/chapter-intent.md 新模板
+              templates/context-pack.md 更新（意图概要 + 声台形表）
+              state.json 新增 input_governance 字段
+              旧项目向后兼容：legacy mode 自动检测
+
+v1.13.0 ──→ 📝 InkOS Editable Prompt Packs 融合
+              Step 2.1c 可编辑提示词包：prompt/ 目录 + 三层叠加载
+              5 个 agent 提示词文件定义（writer/planner/composer/auditor/reviser）
+              编辑原则（不覆盖核心逻辑 + diff 可追踪 + 删除回退）
+
+v1.14.0 ──→ 📁 InkOS Material Archive & Evidence Trace 融合
+              Step 2.1d 材料归档检索：materials/ 目录 + index.json
+              Compose 检索联动（context.md 新增「相关材料参考」区块）
+              trace.json 材料引用记录
+              对抗式编辑中引用证据标记（mat-XX-XX）
+              mkdir -p materials 初始化
+
+v1.15.0 ──→ ⚡ InkOS Short Run 融合（短篇模式）
+              轻量版独立管线：不跑完整 4-Phase
+              快速地基：仅 characters.md + outline.md（无 world/voice/canon/评分门控）
+              S2 批量撰写：一次 delegate_task 写完所有章节（不逐章 Plan→Compose）
+              S3 轻量审阅：5 维度检查（情节/角色/文笔/悬念/完成度）
+              S4 导出三件套：manuscript.md + sales-package.md + cover-prompt.md
+              全程预估 5-10 分钟（vs 长篇管线 30-60 分钟）
+              目录结构：~/novels/shorts/<短篇名>/
 ```
 
 ---
@@ -68,8 +103,9 @@ v1.10.0 ──→ 实战沉淀期
 | **字数治理** | Step 2.2.4 + Step 3b.2b + `references/word-governance.md` | 保守写原则 + 5 级偏差（<50%/50-70%/70-130%/130-200%/>200%） | v1.4 |
 | **雷达 Radar** | Step 1.0 + `references/radar-report-template.md` | web_search + 竞争分析报告模板 | v1.5 |
 | **编排师 Composer** | Step 2.1b + `templates/context-pack.md` | 纯文件读取，输出 ~1000 字上下文包，含缓存失效标记 | v1.6 |
-| **观察者 Observer** | Step 2.2b + `templates/character-registry.md` | 7 类事实提取，每章执行，伏笔检测是核心附加值 | v1.7 |
+| **观察者 Observer** | Step 2.2b + `templates/character-registry.md` | 7→9 类事实提取扩展 | v1.7 → v1.10 |
 | **伏笔追踪** | canon.md pending_hooks + V21 回收率检测 | 🟢已回收/🟡待回收/🔴逾期未收/⚪艺术留白 四态 | v1.3 |
+| **输入治理 Input Governance** | Step 2.1b + `templates/chapter-intent.md` | plan→compose 双层管线：intent.md + rule-stack.yaml + trace.json | v1.12 |
 
 ---
 
@@ -132,13 +168,19 @@ v1.10.0 ──→ 实战沉淀期
 - **预防：** 勿将 read_file 显示输出直接传给 write_file
 - **记录位置：** analyzebook SKILL.md（章节大纲维护 场景四）
 
+### 🐛 GitHub 内容提取受阻（2026-07-07）
+- **表现：** web_extract（ddgs）失败 + proxy 请求被阻止 + browser_navigate 超时
+- **真相：** 网络代理/防火墙限制，纯 HTTP 和 API 请求不可达 GitHub
+- **修复方式：** 先用 `web_search` 获取预览线索（star 数、描述），再用 `browser_navigate` 直接打开 GitHub 页面，然后用 `browser_console` + `document.querySelector('article.markdown-body')?.innerText` 提取完整 README 文本。在 releases 页面用同样方法获取更新日志。
+- **教训：** 当 web_extract 和 curl 都不工作，browser_navigate + browser_console 是最后的可靠路径。先用 search 收集基本数据，再进浏览器获取全文。
+
 ---
 
 ## 六、目录结构
 
 ```
 ~/.hermes/skills/creative/autonovel-workflow/
-├── SKILL.md                        # 主技能文档（v1.10.0）
+├── SKILL.md                        # 主技能文档（v1.15.0）
 ├── references/
 │   ├── version-history.md          ← 本文件
 │   ├── adversarial-review-framework.md   # 37维度审计框架
@@ -147,6 +189,7 @@ v1.10.0 ──→ 实战沉淀期
 │   ├── anti-slop.md                      # 文风反注水指南
 │   ├── batch-delegation-benchmark.md     # 54章批量委托基准数据
 │   ├── inkos-fusion-pattern.md           # InkOS 融合模式指南
+│   ├── inkos-v1.6-fusion-roadmap.md      # v1.6.x 融合路线图（2026-07-07）
 │   ├── radar-report-template.md          # 雷达报告模板
 │   ├── style-cleanup-protocol.md         # 文风清理协议
 │   └── word-governance.md                # 字数治理详细说明
@@ -154,6 +197,7 @@ v1.10.0 ──→ 实战沉淀期
 │   ├── canon.md
 │   ├── characters.md
 │   ├── character-registry.md
+│   ├── chapter-intent.md            # 规划师意图声明（v1.12 新增）
 │   ├── context-pack.md
 │   ├── outline.md
 │   ├── voice.md
